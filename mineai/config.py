@@ -25,6 +25,7 @@ class ConfigManager:
             "deepl_key": "",
         },
         "OPENROUTER": {
+            "api_url": "https://openrouter.ai/api/v1/chat/completions",
             "api_key": "",
             "model": "google/gemma-2-9b-it:free",
             "site_url": "",
