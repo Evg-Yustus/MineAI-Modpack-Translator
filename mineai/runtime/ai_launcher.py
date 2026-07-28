@@ -40,7 +40,6 @@ class AiLauncher:
                     "--quiet",
                     "--contextsize",
                     "8192",
-                    "--usecublas",
                     "--gpulayers",
                     gpu,
                 ],
