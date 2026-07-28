@@ -55,8 +55,17 @@ TERMINOLOGY_FIXES = load_dictionary()
 def polish_translation(text: str) -> str:
     if not isinstance(text, str) or not text:
         return text
-    text = re.sub(r"([&§][0-9a-fk-or])\s+", r"\1", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+([&§][r])", r"\1", text, flags=re.IGNORECASE)
+    # Чиним пробелы внутри самих Minecraft-кодов:
+    text = re.sub(r"([&§])\s+([0-9a-fk-or])", r"\1\2", text, flags=re.IGNORECASE)
+
+    # Убираем случайный пробел после цветовых/стилевых кодов (НЕ трогая &r / §r)
+    text = re.sub(r"([&§][0-9a-fk-o])\s+", r"\1", text, flags=re.IGNORECASE)
+
+    # Убираем дублирующийся пробел перед reset-кодом
+    text = re.sub(r"\s+([&§]r)(?=\s)", r"\1", text, flags=re.IGNORECASE)
+
+    # Добавляем пробел, если reset-код склеился со следующим словом ("уровня&rи" -> "уровня&r и")
+    text = re.sub(r"(?<=[^\s&§])([&§]r)(?=[^\W_])", r"\1 ", text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s+(%\d*\$?[sd])\s+\]", r"[\1]", text)
     text = re.sub(r"\(\s+(%\d*\$?[sd])\s+\)", r"(\1)", text)
     text = re.sub(r'\"\s+(%\d*\$?[sd])\s+\"', r'"\1"', text)
