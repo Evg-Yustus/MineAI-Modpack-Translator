@@ -7,7 +7,7 @@ echo  MineAI Translator — сборка EXE
 echo =========================================
 echo.
 
-echo [1/3] Установка и обновление зависимостей...
+echo [1/3] Зависимости...
 python -m pip install -r requirements.txt pyinstaller -q
 if errorlevel 1 (
     echo Ошибка: не удалось установить пакеты. Проверьте Python 3.10+
@@ -15,8 +15,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [2/3] Запуск сборки через PyInstaller...
-python -m PyInstaller --noconfirm --clean --noconsole --onefile --name=MineAI_Translator mineai/__main__.py
+echo [2/3] PyInstaller...
+:: Добавлен флаг --icon="icon.ico"
+python -m PyInstaller --noconfirm --clean --onefile --noconsole --icon="icon.ico" --name "MineAI_Translator" mineai\__main__.py
 if errorlevel 1 (
     echo Ошибка сборки.
     pause
@@ -25,7 +26,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/3] Готово!
-echo    EXE-файл успешно создан: dist\MineAI_Translator.exe
+echo    EXE: dist\MineAI_Translator.exe
 echo.
 echo Рядом с EXE положите при необходимости:
 echo    settings.ini, dictionary.json, cache.json
