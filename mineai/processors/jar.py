@@ -195,6 +195,15 @@ class JarProcessor:
     ) -> bool:
         tr_path = re.sub(r"/en_us/", f"/{target_lang['file']}/", item.filename, flags=re.IGNORECASE)
         tr_key = tr_path.lower()
+        # --- ФИКС ДЛЯ КНИГ PATCHOULI (Защита оригинального перевода) ---
+        if mode == "append" and tr_key in locale_files:
+            if output_mode == "resourcepack" and pack_writer:
+                pack_writer.write(tr_path, zin.read(locale_files[tr_key]))
+            elif output_mode == "inplace" and zout:
+                zout.writestr(tr_path, zin.read(locale_files[tr_key]))
+                written_inplace.add(tr_path)
+            return True
+        # ---------------------------------------------------------------
         try:
             en_data = load_lenient_json(zin.read(item))
         except (json.JSONDecodeError, OSError):
@@ -258,7 +267,15 @@ class JarProcessor:
         )
         tr_key = tr_path.lower()
         target_regex = target_lang["regex"]
-
+        # --- ФИКС ДЛЯ КНИГ MD (Защита оригинального перевода) ---
+        if mode == "append" and tr_key in locale_files:
+            if output_mode == "resourcepack" and pack_writer:
+                pack_writer.write(tr_path, zin.read(locale_files[tr_key]))
+            elif output_mode == "inplace" and zout:
+                zout.writestr(tr_path, zin.read(locale_files[tr_key]))
+                written_inplace.add(tr_path)
+            return True
+        # --------------------------------------------------------
         try:
             en_text = zin.read(item).decode("utf-8-sig", errors="ignore")
         except OSError:
