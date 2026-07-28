@@ -39,6 +39,7 @@ class TranslationService:
             return DeepLEngine(self.config.get("API", "deepl_key"))
         if self.ai_provider == "openrouter":
             return OpenRouterEngine(
+                api_url=self.config.get("OPENROUTER", "api_url"),
                 api_key=self.config.get("OPENROUTER", "api_key"),
                 model=self.config.get("OPENROUTER", "model") or DEFAULT_OPENROUTER_MODEL,
                 mode=self.ai_mode,
