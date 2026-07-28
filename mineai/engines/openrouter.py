@@ -16,6 +16,7 @@ class OpenRouterEngine(BatchLlmEngine):
         site_url: str = "",
         app_name: str = "MineAI Translator",
     ) -> None:
+        self.api_url = api_url.strip() or "https://openrouter.ai/api/v1/chat/completions"
         self.api_key = api_key.strip()
         self.model = model.strip()
         self.site_url = site_url.strip()
@@ -46,7 +47,7 @@ class OpenRouterEngine(BatchLlmEngine):
             time.sleep(base_delay)
             
             response = requests.post(
-                OPENROUTER_API,
+                self.api_url,
                 headers=self._headers(),
                 json={
                     "model": self.model,
