@@ -58,6 +58,11 @@ class SettingsWindow(ctk.CTkToplevel):
             font=("", 11),
             text_color="gray",
         ).pack(anchor="w", padx=10, pady=(10, 0))
+        
+        ctk.CTkLabel(tab_or, text="API URL (для Ollama, vLLM и др.):", font=("", 12, "bold")).pack(anchor="w", padx=10, pady=(10, 0))
+        self.ent_or_url = ctk.CTkEntry(tab_or)
+        self.ent_or_url.insert(0, config.get("OPENROUTER", "api_url"))
+        self.ent_or_url.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(tab_or, text="API ключ OpenRouter:", font=("", 12, "bold")).pack(anchor="w", padx=10, pady=(5, 0))
         self.ent_or_key = ctk.CTkEntry(tab_or, show="*")
@@ -120,6 +125,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.set("AI", "model_path", self.ent_ai_mod.get())
         self.config.set("AI", "gpu_layers", int(self.slider_gpu.get()))
         self.config.set("OPENROUTER", "api_key", self.ent_or_key.get())
+        self.config.set("OPENROUTER", "api_url", self.ent_or_url.get().strip())
         self.config.set("OPENROUTER", "model", self.ent_or_model.get().strip())
         self.config.set("OPENROUTER", "site_url", self.ent_or_site.get().strip())
         self.config.set("OPENROUTER", "app_name", self.ent_or_app.get().strip())
