@@ -1,3 +1,3 @@
 """MineAI Modpack Translator — modular localization tool for Minecraft."""
 
-__version__ = "9.1.0"
+__version__ = "beta 9.3.1"
