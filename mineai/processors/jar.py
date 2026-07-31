@@ -81,11 +81,10 @@ class JarProcessor:
                             if target_file not in fl and f"/{target_lang['file']}/" not in fl:
                                 zout.writestr(item, zin.read(item))
 
-                        is_book_json = fl.endswith(".json") and (
-                            ("/en_us/" in fl and any(m in fl for m in BOOK_PATH_MARKERS))
-                            or any(m in fl for m in RESEARCH_PATH_MARKERS)
+                        is_book_json = fl.endswith(".json") and "/en_us/" in fl and (
+                            any(m in fl for m in BOOK_PATH_MARKERS) or any(m in fl for m in RESEARCH_PATH_MARKERS)
                         )
-                        is_book_md = (fl.endswith(".md") or fl.endswith(".txt")) and any(
+                        is_book_md = (fl.endswith(".md") or fl.endswith(".txt")) and "/en_us/" in fl and any(
                             m in fl for m in MD_PATH_MARKERS
                         )
                         is_lang = fl.endswith("en_us.json") and not is_book_json
