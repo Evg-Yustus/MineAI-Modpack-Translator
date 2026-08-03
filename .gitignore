@@ -1,0 +1,22 @@
+# Сборка через PyInstaller
+build/
+dist/
+*.spec
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Локальные настройки и кэши приложения
+settings.ini
+dictionary.json
+ai_error_log.txt
+mineai_log.txt
+prompts.json
+mineai/__pycache__/__init__.cpython-312.pyc
+mineai/__pycache__/__init__.cpython-312.pyc
+/mineai/__pycache__
+/mineai/__pycache__
+/mineai/engines/__pycache__
