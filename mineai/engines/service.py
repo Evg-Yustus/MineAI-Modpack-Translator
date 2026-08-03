@@ -31,7 +31,7 @@ class TranslationService:
         self.ai_batch = ai_batch
         self.ai_provider = ai_provider
 
-    def _build_engine(self, context: str = "") -> TranslationEngine:
+    def _build_engine(self, context: str = "", prompt_type: str = "mods") -> TranslationEngine:
         if self.engine_name == "google":
             return GoogleEngine(
                 workers=self.config.getint("GENERAL", "google_workers", 5),
@@ -46,7 +46,7 @@ class TranslationService:
                 model=self.config.get("OPENROUTER", "model") or DEFAULT_OPENROUTER_MODEL,
                 mode=self.ai_mode,
                 context=context,
-                prompt_type=prompt_type,
+                prompt_type=prompt_type,  # <-- Теперь переменная известна!
                 site_url=self.config.get("OPENROUTER", "site_url"),
                 app_name=self.config.get("OPENROUTER", "app_name"),
             )
