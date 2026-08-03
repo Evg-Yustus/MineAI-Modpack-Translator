@@ -17,6 +17,7 @@ class OpenRouterEngine(BatchLlmEngine):
         context: str = "",
         site_url: str = "",
         app_name: str = "MineAI Translator",
+        retries: int = 3,
     ) -> None:
         self.api_url = api_url.strip() or "https://openrouter.ai/api/v1/chat/completions"
         self.api_key = api_key.strip()
@@ -29,6 +30,7 @@ class OpenRouterEngine(BatchLlmEngine):
             prompt_type=prompt_type,
             call_api=self._request,
             label="OpenRouter",
+            retries=retries,
         )
 
     def _headers(self) -> dict[str, str]:

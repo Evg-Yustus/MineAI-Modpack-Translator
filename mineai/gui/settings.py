@@ -11,7 +11,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config = config
         self.on_saved = on_saved
         self.title("⚙ Настройки MineAI")
-        self.geometry("540x680")
+        self.geometry("540x720")
         self.resizable(False, False)
         self.grab_set()
 
@@ -95,7 +95,31 @@ class SettingsWindow(ctk.CTkToplevel):
             anchor="w", padx=10, pady=15
         )
 
-        workers = config.getint("GENERAL", "google_workers", 5)
+        # --- БЕЗОПАСНЫЙ БЛОК ЧТЕНИЯ НАСТРОЕК ---
+        try:
+            retries_val = config.getint("AI", "ai_retries")
+        except Exception:
+            retries_val = 3
+            
+        self.lbl_retries = ctk.CTkLabel(
+            tab_gen, 
+            text=f"Повторы ИИ при ошибке: {retries_val}" if retries_val > 0 else "Повторы ИИ при ошибке: Отключены", 
+            font=("", 12, "bold")
+        )
+        self.lbl_retries.pack(anchor="w", padx=10)
+        self.slider_retries = ctk.CTkSlider(
+            tab_gen, from_=0, to=5, number_of_steps=5,
+            command=lambda v: self.lbl_retries.configure(text=f"Повторы ИИ при ошибке: {int(v)}" if int(v) > 0 else "Повторы ИИ при ошибке: Отключены")
+        )
+        self.slider_retries.set(retries_val)
+        self.slider_retries.pack(fill="x", padx=10, pady=(5, 15))
+
+        # Здесь мы тоже убрали fallback, заменив на безопасный подход, который используется в твоем проекте
+        try:
+            workers = config.getint("GENERAL", "google_workers")
+        except Exception:
+            workers = 5
+            
         ctk.CTkLabel(tab_gen, text="Потоки Google Translate:", font=("", 12, "bold")).pack(anchor="w", padx=10)
         self.slider_thr = ctk.CTkSlider(tab_gen, from_=1, to=10, number_of_steps=9)
         self.slider_thr.set(workers)
@@ -141,6 +165,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.set("OPENROUTER", "site_url", self.ent_or_site.get().strip())
         self.config.set("OPENROUTER", "app_name", self.ent_or_app.get().strip())
         self.config.set("GENERAL", "smart_glue", self.var_smart.get())
+        self.config.set("AI", "ai_retries", int(self.slider_retries.get()))
         self.config.set("GENERAL", "google_workers", int(self.slider_thr.get()))
         self.config.set("API", "deepl_key", self.ent_deepl.get())
         self.on_saved()

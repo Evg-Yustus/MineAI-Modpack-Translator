@@ -32,6 +32,11 @@ class TranslationService:
         self.ai_provider = ai_provider
 
     def _build_engine(self, context: str = "", prompt_type: str = "mods") -> TranslationEngine:
+        try:
+            retries = self.config.getint("AI", "ai_retries")
+        except Exception:
+            retries = 3
+        
         if self.engine_name == "google":
             return GoogleEngine(
                 workers=self.config.getint("GENERAL", "google_workers", 5),
@@ -46,11 +51,12 @@ class TranslationService:
                 model=self.config.get("OPENROUTER", "model") or DEFAULT_OPENROUTER_MODEL,
                 mode=self.ai_mode,
                 context=context,
-                prompt_type=prompt_type,  # <-- Теперь переменная известна!
+                prompt_type=prompt_type,
+                retries=retries,  # <--- НОВАЯ СТРОКА
                 site_url=self.config.get("OPENROUTER", "site_url"),
                 app_name=self.config.get("OPENROUTER", "app_name"),
             )
-        return KoboldEngine(mode=self.ai_mode, context=context, prompt_type=prompt_type)
+        return KoboldEngine(mode=self.ai_mode, context=context, prompt_type=prompt_type, retries=retries)  # <--- ДОБАВИЛИ retries=retries В КОНЕЦ
 
     def translate_dict(
         self,
@@ -97,7 +103,7 @@ class TranslationService:
         engine = self._build_engine(context)
         
         # --- НОВЫЙ АЛГОРИТМ РАЗБИЕНИЯ НА ПАЧКИ ПО СИМВОЛАМ ---
-        is_ai = self.engine_name == "ai"
+        is_ai = self.engine_name not in ("google", "deepl")  # <--- ИЗМЕНИЛИ ЭТУ СТРОКУ (теперь ИИ определяется правильно)
         # Лимит символов: размер пачки * 100. Например, 20 строк = 2000 символов макс.
         max_chars = self.ai_batch * 100 if is_ai else 999999
         

@@ -106,12 +106,14 @@ class BatchLlmEngine(TranslationEngine):
         prompt_type: str = "mods",
         call_api: Callable[[str, int], str | None],
         label: str = "ИИ",
+        retries: int = 3,  # <--- НОВАЯ СТРОКА
     ) -> None:
         self.mode = mode
         self.context = context
         self.prompt_type = prompt_type
         self._call_api = call_api
         self.label = label
+        self.retries = retries  # <--- НОВАЯ СТРОКА
         self.batch_size = 40 if mode == "context" else 20
         self.max_tokens = 4096 if mode == "context" else 2048
 
@@ -139,8 +141,10 @@ class BatchLlmEngine(TranslationEngine):
             )
             
             # --- НОВАЯ СИСТЕМА КАСКАДНЫХ ПОВТОРОВ (10 -> 5 -> 1) ---
+            active_retries = RETRY_BATCH_SIZES[:self.retries]  # <--- НОВАЯ СТРОКА (Обрезаем список попыток)
+            
             for retry_number, retry_batch_size in enumerate(
-                RETRY_BATCH_SIZES,
+                active_retries,  # <--- ЗАМЕНИЛИ RETRY_BATCH_SIZES на active_retries
                 start=1,
             ):
                 if not failed or not callbacks.should_run():
