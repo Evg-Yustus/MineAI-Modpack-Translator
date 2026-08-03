@@ -5,7 +5,7 @@ from mineai.engines.llm_common import BatchLlmEngine
 
 
 class KoboldEngine(BatchLlmEngine):
-    def __init__(self, mode: str = "safe", context: str = "") -> None:
+    def __init__(self, mode: str = "safe", context: str = "", prompt_type: str = "mods") -> None:
         super().__init__(
             mode=mode,
             context=context,
