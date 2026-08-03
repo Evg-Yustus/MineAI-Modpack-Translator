@@ -20,6 +20,7 @@ class TranslationService:
         *,
         google_mode: str = "single",
         ai_mode: str = "safe",
+        ai_batch: int = 20,
         ai_provider: str = "local",
     ) -> None:
         self.engine_name = engine_name
@@ -27,6 +28,7 @@ class TranslationService:
         self.config = config
         self.google_mode = google_mode
         self.ai_mode = ai_mode
+        self.ai_batch = ai_batch
         self.ai_provider = ai_provider
 
     def _build_engine(self, context: str = "") -> TranslationEngine:
@@ -44,10 +46,11 @@ class TranslationService:
                 model=self.config.get("OPENROUTER", "model") or DEFAULT_OPENROUTER_MODEL,
                 mode=self.ai_mode,
                 context=context,
+                prompt_type=prompt_type,
                 site_url=self.config.get("OPENROUTER", "site_url"),
                 app_name=self.config.get("OPENROUTER", "app_name"),
             )
-        return KoboldEngine(mode=self.ai_mode, context=context)
+        return KoboldEngine(mode=self.ai_mode, context=context, prompt_type=prompt_type)
 
     def translate_dict(
         self,
@@ -56,6 +59,7 @@ class TranslationService:
         callbacks: EngineCallbacks,
         *,
         context: str = "",
+        prompt_type: str = "mods",
     ) -> dict[str, str]:
         if not strings:
             return {}
@@ -91,7 +95,68 @@ class TranslationService:
             return result
 
         engine = self._build_engine(context)
-        translated = engine.translate_batch(pending, target_lang, callbacks)
+        
+        # --- НОВЫЙ АЛГОРИТМ РАЗБИЕНИЯ НА ПАЧКИ ПО СИМВОЛАМ ---
+        is_ai = self.engine_name == "ai"
+        # Лимит символов: размер пачки * 100. Например, 20 строк = 2000 символов макс.
+        max_chars = self.ai_batch * 100 if is_ai else 999999
+        
+        batches = []
+        current_batch = {}
+        current_chars = 0
+        
+        for k, item in pending.items():
+            text_len = len(item.original)
+            
+            # Если пачка переполнена по символам - сохраняем и начинаем новую
+            if is_ai and current_batch and (current_chars + text_len) > max_chars:
+                batches.append(current_batch)
+                current_batch = {}
+                current_chars = 0
+                
+            current_batch[k] = item
+            current_chars += text_len
+            
+            # Если пачка переполнена по количеству строк - тоже сохраняем
+            if (not is_ai and len(current_batch) >= 50) or (is_ai and len(current_batch) >= self.ai_batch):
+                batches.append(current_batch)
+                current_batch = {}
+                current_chars = 0
+                
+        if current_batch:
+            batches.append(current_batch)
+            
+        translated = {}
+        for i, batch in enumerate(batches):
+            if not callbacks.should_run():
+                break
+            # Выводим в лог информацию, если пачек больше одной
+            if len(batches) > 1:
+                callbacks.on_log(f"📦 Отправка пачки {i+1}/{len(batches)} ({len(batch)} строк)...", "dim")
+            
+            batch_result = engine.translate_batch(batch, target_lang, callbacks)
+            translated.update(batch_result)
+        # --- КОНЕЦ НОВОГО АЛГОРИТМА ---
+
+        # --- НОВЫЙ БЛОК: ПОДСТРАХОВКА GOOGLE ---
+        failed_pending = {k: v for k, v in pending.items() if k not in translated}
+        
+        try:
+            use_fallback = self.config.getboolean("AI", "fallback_google")
+        except Exception:
+            use_fallback = False
+            
+        if failed_pending and is_ai and use_fallback and callbacks.should_run():
+            callbacks.on_log(f"🔄 ИИ не справился. Переводим {len(failed_pending)} строк через Google...", "cyan")
+            google_engine = GoogleEngine(
+                workers=self.config.getint("GENERAL", "google_workers", 5),
+                mode=self.google_mode,
+            )
+            google_translated = google_engine.translate_batch(failed_pending, target_lang, callbacks)
+            
+            # Добавляем успешные переводы Google в общий словарь (они автоматически пойдут в кэш!)
+            translated.update(google_translated)
+        # --- КОНЕЦ БЛОКА ПОДСТРАХОВКИ ---
 
         for key, text in translated.items():
             original = pending[key].original

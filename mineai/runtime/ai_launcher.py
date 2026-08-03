@@ -39,7 +39,7 @@ class AiLauncher:
                     "5001",
                     "--quiet",
                     "--contextsize",
-                    "8192",
+                    "4096",
                     "--gpulayers",
                     gpu,
                 ],
@@ -53,7 +53,7 @@ class AiLauncher:
         for i in range(180):
             if not should_continue():
                 return False
-            on_status(f"Прогрев нейросети... ({i}/180 сек)")
+            on_status(f"Прогрев нейросети... ({i}/600 сек)")
             if self.is_alive():
                 on_log("✅ ИИ успешно запущен!\n", "green")
                 return True

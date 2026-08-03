@@ -116,12 +116,36 @@ class TranslatorApp(ctk.CTk):
         ctk.CTkRadioButton(
             self.frame_ai, text="OpenRouter (облако)", variable=self.var_ai_provider, value="openrouter"
         ).pack(anchor="w", pady=1)
-        ctk.CTkRadioButton(self.frame_ai, text="Безопасный (20 строк)", variable=self.var_ai_mode, value="safe").pack(
-            anchor="w", pady=(6, 2)
+        
+        # --- НОВЫЙ БЛОК НАСТРОЕК ИИ С ПОЛЗУНКОМ ---
+        ctk.CTkLabel(self.frame_ai, text="Режим ИИ:", font=("", 11, "bold")).pack(anchor="w", pady=(6, 0))
+        ctk.CTkRadioButton(self.frame_ai, text="Стандартный", variable=self.var_ai_mode, value="safe").pack(anchor="w", pady=2)
+        ctk.CTkRadioButton(self.frame_ai, text="Контекст + лор", variable=self.var_ai_mode, value="context").pack(anchor="w", pady=2)
+        
+        # Динамический текст для ползунка
+        self.lbl_batch = ctk.CTkLabel(self.frame_ai, text="Размер пачки: 20 строк", font=("", 11, "bold"))
+        self.lbl_batch.pack(anchor="w", pady=(6, 0))
+        
+        # Сам ползунок (от 1 до 40 с шагом 1)
+        self.slider_ai_batch = ctk.CTkSlider(
+            self.frame_ai, from_=1, to=40, number_of_steps=39,
+            command=lambda val: self.lbl_batch.configure(text=f"Размер пачки: {int(val)} строк")
         )
-        ctk.CTkRadioButton(self.frame_ai, text="Контекст + лор (40 строк)", variable=self.var_ai_mode, value="context").pack(
-            anchor="w", pady=2
-        )
+        self.slider_ai_batch.set(20)
+        self.slider_ai_batch.pack(fill="x", pady=2)
+
+        # --- НОВАЯ ГАЛОЧКА ДЛЯ ПОДСТРАХОВКИ GOOGLE ---
+        try:
+            fallback_val = settings.getboolean("AI", "fallback_google")
+        except Exception:
+            fallback_val = False
+            
+        self.var_ai_fallback = ctk.BooleanVar(value=fallback_val)
+        ctk.CTkCheckBox(
+            self.frame_ai, 
+            text="Переводить непереведенное через Google", 
+            variable=self.var_ai_fallback
+        ).pack(anchor="w", pady=(10, 0))
 
         ctk.CTkLabel(left, text="РЕЖИМ ОБРАБОТКИ", font=("", 14, "bold")).pack(pady=(15, 5))
         self.var_mode = ctk.StringVar(value="append")
@@ -164,7 +188,18 @@ class TranslatorApp(ctk.CTk):
             state="disabled",
         )
         self.btn_stop.pack(pady=(5, 10), fill="x", padx=20)
-
+        
+        # --- НОВАЯ КНОПКА ЛОГОВ ---
+        self.btn_log = ctk.CTkButton(
+            left,
+            text="📜 ОТКРЫТЬ ЛОГ",
+            fg_color="#555",
+            hover_color="#444",
+            height=30,
+            command=self._open_log_file,
+        )
+        self.btn_log.pack(pady=(0, 10), fill="x", padx=20)
+        
         right = ctk.CTkFrame(self)
         right.pack(side="right", fill="both", expand=True, padx=(0, 10), pady=10)
         self.textbox = ctk.CTkTextbox(right, state="disabled", font=("Consolas", 13))
@@ -212,6 +247,7 @@ class TranslatorApp(ctk.CTk):
             engine=self.var_engine.get(),
             google_mode=self.var_google_mode.get(),
             ai_mode=self.var_ai_mode.get(),
+            ai_batch=int(self.slider_ai_batch.get()),
             ai_provider=self.var_ai_provider.get(),
             process_mode=self.var_mode.get(),
             translate_mods=self.var_mods.get(),
@@ -254,6 +290,13 @@ class TranslatorApp(ctk.CTk):
         if self.auto_scroll or at_bottom:
             self.textbox.see("end")
         self.textbox.configure(state="disabled")
+        
+        # Запись в общий текстовый лог
+        try:
+            with open("mineai_log.txt", "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+        except Exception:
+            pass
 
     def log_row(self, icon: str, name: str, kind: str, trans_c: int, en_c: int, pct: int) -> None:
         self.textbox.configure(state="normal")
@@ -327,6 +370,7 @@ class TranslatorApp(ctk.CTk):
             return
         if self.var_engine.get() == "ai":
             settings.set("AI", "ai_provider", self.var_ai_provider.get())
+            settings.set("AI", "fallback_google", self.var_ai_fallback.get()) # <-- СОХРАНЯЕМ ВЫБОР
         self._lock_ui(True)
         self.job_state.is_running = True
         self.job_state.is_paused = False
@@ -334,7 +378,20 @@ class TranslatorApp(ctk.CTk):
         self._clear_log()
         self._job = self._job_instance()
         threading.Thread(target=self._run_translation_thread, daemon=True).start()
-
+    
+    
+    def _open_log_file(self) -> None:
+        log_path = "mineai_log.txt"
+        if os.path.exists(log_path):
+            try:
+                # Так как ты работаешь на Windows, используем os.startfile
+                os.startfile(log_path)
+            except Exception as e:
+                self.log(f"❌ Не удалось открыть лог: {e}", "red")
+        else:
+            self.log("❌ Лог-файл еще не создан.", "yellow")
+            
+            
     def _run_translation_thread(self) -> None:
         try:
             if self._job is not None:

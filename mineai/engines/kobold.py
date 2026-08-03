@@ -9,6 +9,7 @@ class KoboldEngine(BatchLlmEngine):
         super().__init__(
             mode=mode,
             context=context,
+            prompt_type=prompt_type,
             call_api=self._request,
             label="KoboldCPP",
         )

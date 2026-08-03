@@ -12,6 +12,7 @@ class OpenRouterEngine(BatchLlmEngine):
         model: str,
         *,
         api_url: str = OPENROUTER_API,
+        prompt_type: str = "mods",
         mode: str = "safe",
         context: str = "",
         site_url: str = "",
@@ -25,6 +26,7 @@ class OpenRouterEngine(BatchLlmEngine):
         super().__init__(
             mode=mode,
             context=context,
+            prompt_type=prompt_type,
             call_api=self._request,
             label="OpenRouter",
         )

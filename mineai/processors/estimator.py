@@ -7,7 +7,7 @@ from mineai.constants import BOOK_PATH_MARKERS, MD_PATH_MARKERS, RESEARCH_PATH_M
 from mineai.json_utils import iter_translatable_strings, load_lenient_json
 from mineai.processors.snbt_extract import extract_snbt_strings
 from mineai.runtime.state import JobState
-from mineai.text_processing import apply_smart_glue, is_technical_term, looks_like_source_language
+from mineai.text_processing import already_translated, apply_smart_glue, is_technical_term, looks_like_source_language
 
 
 class StringEstimator:
@@ -19,6 +19,7 @@ class StringEstimator:
         jar_files: list[str],
         loose_files: list[str],
         snbt_files: list[str],
+        bq_files: list[str], # <-- ДОБАВЛЕНО
         *,
         target_lang: dict,
         mode: str,
@@ -49,6 +50,12 @@ class StringEstimator:
                 if not self.state.should_run():
                     return total
                 total += self._estimate_snbt(path, mode, target_regex)
+                
+            # <-- ДОБАВЛЕНО
+            for path in bq_files:
+                if not self.state.should_run():
+                    return total
+                total += self._estimate_bq(path, mode, target_regex)
 
         return total
 
@@ -169,3 +176,28 @@ class StringEstimator:
         if mode == "force":
             return len(strings)
         return sum(1 for s in strings if not re.search(target_regex, s))
+
+
+    def _estimate_bq(self, path: str, mode: str, target_regex: str) -> int:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return 0
+
+        n = 0
+        props_key = next((k for k in data if k.startswith("properties")), None)
+        if props_key and isinstance(data[props_key], dict):
+            bq_key = next((k for k in data[props_key] if k.startswith("betterquesting")), None)
+            if bq_key and isinstance(data[props_key][bq_key], dict):
+                bq_data = data[props_key][bq_key]
+                for key_prefix in ["name", "desc"]:
+                    actual_key = next((k for k in bq_data if k.startswith(key_prefix)), None)
+                    if actual_key and isinstance(bq_data[actual_key], str):
+                        text = bq_data[actual_key].strip()
+                        if not text:
+                            continue
+                        # Считаем строку, если режим "С нуля" ИЛИ если в тексте нет русских букв
+                        if mode == "force" or not already_translated(text, target_regex):
+                            n += 1
+        return n

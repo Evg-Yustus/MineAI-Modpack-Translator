@@ -62,7 +62,16 @@ class ModpackAnalyzer:
                 for name in files:
                     if name.endswith(".snbt"):
                         snbt_files.append(os.path.join(root, name))
-
+        
+        # ПОИСК BQ
+        bq_dir = os.path.join(mc_dir, "config", "betterquesting", "DefaultQuests")
+        bq_files: list[str] = []
+        if os.path.isdir(bq_dir) and translate_quests:
+            for root, _, files in os.walk(bq_dir):
+                for name in files:
+                    if name.endswith(".json") and ("QuestLines" in root or "Quests" in root):
+                        bq_files.append(os.path.join(root, name))
+                        
         for index, path in enumerate(snbt_files):
             if not self.state.should_run():
                 break
@@ -71,7 +80,15 @@ class ModpackAnalyzer:
             en, tr = self._analyze_snbt(path, target_regex, on_row)
             total_en += en
             total_tr += tr
-
+        # АНАЛИЗ BQ
+        for index, path in enumerate(bq_files):
+            if not self.state.should_run():
+                break
+            self.state.wait_if_paused()
+            on_status(f"Анализ: BQ {os.path.basename(path)}...", (len(jars) + len(snbt_files) + index) / max(len(jars) + len(snbt_files) + len(bq_files), 1))
+            en, tr = self._analyze_bq(path, target_regex, on_row)
+            total_en += en
+            total_tr += tr
         return total_en, total_tr
 
     def _analyze_jar(self, path, target_file, target_regex, translate_mods, translate_books, on_row, mod_name):
@@ -184,4 +201,35 @@ class ModpackAnalyzer:
         tr_c = sum(1 for s in strings if re.search(target_regex, s))
         if en_c:
             on_row("📜", os.path.basename(path), "Квесты", tr_c, en_c, int(tr_c / en_c * 100))
+        return en_c, tr_c
+    
+    
+    def _analyze_bq(self, path: str, target_regex: str, on_row) -> tuple[int, int]:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return 0, 0
+
+        en_c = 0
+        tr_c = 0
+        props_key = next((k for k in data if k.startswith("properties")), None)
+        if props_key and isinstance(data[props_key], dict):
+            bq_key = next((k for k in data[props_key] if k.startswith("betterquesting")), None)
+            if bq_key and isinstance(data[props_key][bq_key], dict):
+                bq_data = data[props_key][bq_key]
+                for key_prefix in ["name", "desc"]:
+                    actual_key = next((k for k in bq_data if k.startswith(key_prefix)), None)
+                    if actual_key and isinstance(bq_data[actual_key], str):
+                        text = bq_data[actual_key].strip()
+                        if text:
+                            en_c += 1
+                            if already_translated(text, target_regex):
+                                tr_c += 1
+                                
+        if en_c:
+            folder = os.path.basename(os.path.dirname(path))
+            name = f"{folder}/{os.path.basename(path)}"
+            on_row("📜", name, "BetterQuesting", tr_c, en_c, int(tr_c / en_c * 100))
+            
         return en_c, tr_c

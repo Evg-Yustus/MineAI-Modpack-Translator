@@ -3,7 +3,7 @@ from tkinter import filedialog
 
 from mineai.config import ConfigManager
 from mineai.constants import DEFAULT_OPENROUTER_MODEL
-
+from mineai.engines.llm_common import load_prompts, save_prompts, get_default_prompts
 
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent, config: ConfigManager, on_saved) -> None:
@@ -105,7 +105,15 @@ class SettingsWindow(ctk.CTkToplevel):
         self.ent_deepl = ctk.CTkEntry(tab_gen, show="*")
         self.ent_deepl.insert(0, config.get("API", "deepl_key"))
         self.ent_deepl.pack(fill="x", padx=10, pady=5)
-
+        
+        ctk.CTkButton(
+            self,
+            text="📝 Редактор промптов ИИ",
+            fg_color="#17a2b8",
+            hover_color="#138496",
+            command=self._open_prompt_editor,
+        ).pack(fill="x", padx=20, pady=(10, 0))
+        
         ctk.CTkButton(
             self,
             text="💾 Сохранить настройки",
@@ -113,7 +121,10 @@ class SettingsWindow(ctk.CTkToplevel):
             hover_color="#218838",
             command=self._save,
         ).pack(fill="x", padx=20, pady=10)
-
+    
+    def _open_prompt_editor(self) -> None:
+        PromptEditorWindow(self)
+        
     def _browse(self, entry: ctk.CTkEntry, filetypes) -> None:
         path = filedialog.askopenfilename(filetypes=filetypes)
         if path:
@@ -133,4 +144,68 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.set("GENERAL", "google_workers", int(self.slider_thr.get()))
         self.config.set("API", "deepl_key", self.ent_deepl.get())
         self.on_saved()
+        self.destroy()
+
+class PromptEditorWindow(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("📝 Редактор промптов ИИ")
+        self.geometry("750x550")
+        self.grab_set()
+
+        self.prompts = load_prompts()
+
+        tabs = ctk.CTkTabview(self)
+        tabs.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.txt_mods = self._create_tab(tabs, "mods", "Интерфейс (Моды)")
+        self.txt_books = self._create_tab(tabs, "books", "Книги / Справочники")
+        self.txt_quests = self._create_tab(tabs, "quests", "Квесты")
+        
+        # --- ВКЛАДКА "РИСКОВАННЫЙ РЕЖИМ" ---
+        tab_tech = tabs.add("⚙️ Тех. правила (ОПАСНО)")
+        lbl_warn = ctk.CTkLabel(
+            tab_tech, 
+            text="ВНИМАНИЕ: Изменение этих правил может сломать парсинг JSON и маркеров!\nИспользуйте только для экспериментов с нестандартными моделями.", 
+            text_color="#e74c3c", 
+            font=("", 12, "bold"),
+            justify="left"
+        )
+        lbl_warn.pack(anchor="w", pady=(0, 5))
+        self.txt_tech = ctk.CTkTextbox(tab_tech, wrap="word", font=("Consolas", 13))
+        self.txt_tech.pack(fill="both", expand=True)
+        self.txt_tech.insert("1.0", self.prompts.get("technical", get_default_prompts()["technical"]))
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=10, pady=10)
+
+        ctk.CTkButton(btn_frame, text="Сбросить всё по умолчанию", fg_color="#dc3545", hover_color="#c82333", command=self._reset).pack(side="left")
+        ctk.CTkButton(btn_frame, text="💾 Сохранить", fg_color="#28a745", hover_color="#218838", command=self._save).pack(side="right")
+
+    def _create_tab(self, tabs, key, title):
+        tab = tabs.add(title)
+        lbl = ctk.CTkLabel(tab, text="Переменные: {lang_name} (язык), {context} (название мода/файла)", text_color="gray")
+        lbl.pack(anchor="w", pady=(0, 5))
+        txt = ctk.CTkTextbox(tab, wrap="word", font=("", 14))
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", self.prompts.get(key, get_default_prompts()[key]))
+        return txt
+
+    def _reset(self):
+        defaults = get_default_prompts()
+        self.txt_mods.delete("1.0", "end")
+        self.txt_mods.insert("1.0", defaults["mods"])
+        self.txt_books.delete("1.0", "end")
+        self.txt_books.insert("1.0", defaults["books"])
+        self.txt_quests.delete("1.0", "end")
+        self.txt_quests.insert("1.0", defaults["quests"])
+        self.txt_tech.delete("1.0", "end")
+        self.txt_tech.insert("1.0", defaults["technical"])
+
+    def _save(self):
+        self.prompts["mods"] = self.txt_mods.get("1.0", "end").strip()
+        self.prompts["books"] = self.txt_books.get("1.0", "end").strip()
+        self.prompts["quests"] = self.txt_quests.get("1.0", "end").strip()
+        self.prompts["technical"] = self.txt_tech.get("1.0", "end").strip()
+        save_prompts(self.prompts)
         self.destroy()

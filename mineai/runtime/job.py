@@ -9,9 +9,10 @@ from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
 from mineai.output.pack_writer import PackWriter
 from mineai.processors.analyzer import ModpackAnalyzer
-from mineai.processors.discovery import discover_jar_files, discover_loose_lang_files, discover_snbt_files
+from mineai.processors.discovery import discover_jar_files, discover_loose_lang_files, discover_snbt_files, discover_bq_files
 from mineai.processors.estimator import StringEstimator
 from mineai.processors.jar import JarProcessor
+from mineai.processors.bq_json import BQProcessor
 from mineai.processors.loose_json import LooseJsonProcessor
 from mineai.processors.snbt import SnbtProcessor
 from mineai.runtime.ai_launcher import AiLauncher
@@ -28,6 +29,7 @@ class TranslationOptions:
     engine: str  # google | deepl | ai
     google_mode: str
     ai_mode: str
+    ai_batch: int
     ai_provider: str  # local | openrouter
     process_mode: str  # append | skip | force
     translate_mods: bool
@@ -61,7 +63,8 @@ class TranslationJob:
             should_run=self.state.should_run,
             wait_if_paused=self.state.wait_if_paused,
             on_log=self.on_log,
-            on_status=lambda msg: self.on_status(msg, None),
+            # Вклеиваем сообщение от ИИ в наш красивый статус-бар
+            on_status=lambda msg: self.on_status(self.state.get_full_status(msg), None),
         )
 
     def run_analysis(self, options: TranslationOptions) -> None:
@@ -115,8 +118,9 @@ class TranslationJob:
         jars = discover_jar_files(options.mc_dir) if (options.translate_mods or options.translate_books) else []
         loose = discover_loose_lang_files(options.mc_dir) if (options.translate_mods or options.translate_quests) else []
         snbt = discover_snbt_files(options.mc_dir) if options.translate_quests else []
+        bq_files = discover_bq_files(options.mc_dir) if options.translate_quests else []
 
-        if not jars and not loose and not snbt:
+        if not jars and not loose and not snbt and not bq_files:
             self.on_log("❌ Нечего переводить!", "red")
             return
 
@@ -126,6 +130,7 @@ class TranslationJob:
             jars,
             loose,
             snbt,
+            bq_files,
             target_lang=lang,
             mode=options.process_mode,
             translate_mods=options.translate_mods,
@@ -163,18 +168,20 @@ class TranslationJob:
             self.config,
             google_mode=options.google_mode,
             ai_mode=options.ai_mode,
+            ai_batch=options.ai_batch,
             ai_provider=options.ai_provider,
         )
         callbacks = self._callbacks()
         jar_proc = JarProcessor(service, self.state, callbacks)
         loose_proc = LooseJsonProcessor(service, self.state, callbacks)
         snbt_proc = SnbtProcessor(service, self.state, callbacks)
+        bq_proc = BQProcessor(service, self.state, callbacks)
 
         self.state.start_time = time.time()
         self.state.translated_strings = 0
         self.on_log(f"🚀 ЗАПУСК ПЕРЕВОДА ({lang['name']})...\n", "yellow")
 
-        total_items = len(jars) + len(loose) + len(snbt)
+        total_items = len(jars) + len(loose) + len(snbt) + len(bq_files)
         done = 0
 
         try:
@@ -192,8 +199,9 @@ class TranslationJob:
                     pack_writer=pack_writer,
                 )
                 done += 1
+                self.state.update_file_progress("Моды", done, total_items)
                 self.on_status(
-                    f"Модов: {done}/{len(jars)} | ETA: {self.state.eta_text()}",
+                    self.state.get_full_status(),
                     done / max(total_items, 1),
                 )
 
@@ -210,8 +218,9 @@ class TranslationJob:
                     pack_writer=pack_writer,
                 )
                 done += 1
+                self.state.update_file_progress("Словари", done, total_items)
                 self.on_status(
-                    f"Словарей: {done}/{total_items} | ETA: {self.state.eta_text()}",
+                    self.state.get_full_status(),
                     done / max(total_items, 1),
                 )
 
@@ -221,8 +230,21 @@ class TranslationJob:
                 self.state.wait_if_paused()
                 snbt_proc.process(path, target_lang=lang, mode=options.process_mode)
                 done += 1
+                self.state.update_file_progress("Квесты", done, total_items)
                 self.on_status(
-                    f"Квестов: {done}/{total_items} | ETA: {self.state.eta_text()}",
+                    self.state.get_full_status(),
+                    done / max(total_items, 1),
+                )
+
+            for path in bq_files:
+                if not self.state.should_run():
+                    break
+                self.state.wait_if_paused()
+                bq_proc.process(path, target_lang=lang, mode=options.process_mode)
+                done += 1
+                self.state.update_file_progress("BQ", done, total_items)
+                self.on_status(
+                    self.state.get_full_status(),
                     done / max(total_items, 1),
                 )
 

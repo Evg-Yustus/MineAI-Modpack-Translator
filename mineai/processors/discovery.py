@@ -53,3 +53,19 @@ def discover_snbt_files(mc_dir: str) -> list[str]:
                 result.append(os.path.join(root, name))
                 
     return result
+
+
+def discover_bq_files(mc_dir: str) -> list[str]:
+    # Путь к папке BetterQuesting
+    quests_dir = os.path.join(mc_dir, "config", "betterquesting", "DefaultQuests")
+    if not os.path.isdir(quests_dir):
+        return []
+        
+    result: list[str] = []
+    for root, _, files in os.walk(quests_dir):
+        for name in files:
+            # Нам нужны только файлы .json внутри папок QuestLines и Quests
+            if name.endswith(".json") and ("QuestLines" in root or "Quests" in root):
+                result.append(os.path.join(root, name))
+                
+    return result
