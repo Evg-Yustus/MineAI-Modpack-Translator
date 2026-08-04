@@ -102,33 +102,52 @@ class TranslationService:
 
         engine = self._build_engine(context, prompt_type)
         
-        # --- НОВЫЙ АЛГОРИТМ РАЗБИЕНИЯ НА ПАЧКИ ПО СИМВОЛАМ ---
-        is_ai = self.engine_name not in ("google", "deepl")  # <--- ИЗМЕНИЛИ ЭТУ СТРОКУ (теперь ИИ определяется правильно)
-        # Лимит символов: размер пачки * 100. Например, 20 строк = 2000 символов макс.
+                # --- АЛГОРИТМ РАЗБИЕНИЯ НА ПАЧКИ (символы + плейсхолдеры) ---
+        is_ai = self.engine_name not in ("google", "deepl")
         max_chars = self.ai_batch * 100 if is_ai else 999999
-        
+        MAX_PLACEHOLDERS_PER_BATCH = 30  # Лимит маркеров на пачку
+
+        from mineai.text_processing import PLACEHOLDER_PATTERN
+
         batches = []
         current_batch = {}
         current_chars = 0
-        
+        current_placeholders = 0
+
         for k, item in pending.items():
-            text_len = len(item.original)
-            
-            # Если пачка переполнена по символам - сохраняем и начинаем новую
-            if is_ai and current_batch and (current_chars + text_len) > max_chars:
+            text_len = len(item.masked)
+            ph_count = len(PLACEHOLDER_PATTERN.findall(item.masked))
+
+            # Строки с >15 маркерами или >800 символов идут в отдельную пачку
+            if is_ai and (ph_count > 15 or text_len > 800):
+                if current_batch:
+                    batches.append(current_batch)
+                    current_batch = {}
+                    current_chars = 0
+                    current_placeholders = 0
+                batches.append({k: item})
+                continue
+
+            # Переполнение по символам ИЛИ по маркерам
+            if is_ai and current_batch and (
+                (current_chars + text_len) > max_chars
+                or (current_placeholders + ph_count) > MAX_PLACEHOLDERS_PER_BATCH
+            ):
                 batches.append(current_batch)
                 current_batch = {}
                 current_chars = 0
-                
+                current_placeholders = 0
+
             current_batch[k] = item
             current_chars += text_len
-            
-            # Если пачка переполнена по количеству строк - тоже сохраняем
+            current_placeholders += ph_count
+
             if (not is_ai and len(current_batch) >= 50) or (is_ai and len(current_batch) >= self.ai_batch):
                 batches.append(current_batch)
                 current_batch = {}
                 current_chars = 0
-                
+                current_placeholders = 0
+
         if current_batch:
             batches.append(current_batch)
             
@@ -163,6 +182,28 @@ class TranslationService:
             # Добавляем успешные переводы Google в общий словарь (они автоматически пойдут в кэш!)
             translated.update(google_translated)
         # --- КОНЕЦ БЛОКА ПОДСТРАХОВКИ ---
+
+        # --- ДОПОЛНИТЕЛЬНЫЙ ФОНЛБЭК: строки с >10 маркерами, которые ИИ так и не осилил ---
+        if is_ai and callbacks.should_run():
+            still_failed_complex = {
+                k: v for k, v in pending.items()
+                if k not in translated
+                and len(PLACEHOLDER_PATTERN.findall(v.masked)) > 10
+            }
+            if still_failed_complex:
+                callbacks.on_log(
+                    f"🔀 {len(still_failed_complex)} сложных строк (маркеры) → Google Translate",
+                    "cyan",
+                )
+                google_fallback = GoogleEngine(
+                    workers=self.config.getint("GENERAL", "google_workers", 5),
+                    mode="single",
+                )
+                google_result = google_fallback.translate_batch(
+                    still_failed_complex, target_lang, callbacks
+                )
+                translated.update(google_result)
+        # --- КОНЕЦ ДОПОЛНИТЕЛЬНОГО ФАЛЛБЭКА ---
 
         for key, text in translated.items():
             original = pending[key].original

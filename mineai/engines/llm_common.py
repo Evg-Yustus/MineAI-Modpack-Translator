@@ -61,28 +61,50 @@ def build_translation_prompt(
     prompt_type: str = "mods",
 ) -> str:
     blob = json.dumps(payload, ensure_ascii=False)
-    
     prompts = load_prompts()
     intro_template = prompts.get(prompt_type, get_default_prompts()["mods"])
     intro = intro_template.replace("{lang_name}", lang_name).replace("{context}", context)
-    
-    # Подтягиваем технические правила из файла
     tech_rules = prompts.get("technical", get_default_prompts()["technical"])
+
+    # Подсчёт маркеров в payload для дополнительного предупреждения
+    total_placeholders = sum(
+        len(PLACEHOLDER_PATTERN.findall(v)) for v in payload.values()
+    )
+
+    extra_warning = ""
+    if total_placeholders > 10:
+        extra_warning = (
+            f"\n\nCRITICAL PLACEHOLDER WARNING: This text contains {total_placeholders} placeholders like [#0#], [#1#], etc.\n"
+            f"You MUST keep EVERY SINGLE ONE in the exact same quantity.\n"
+            f"Count them BEFORE and AFTER translation. If the count differs, your answer is WRONG.\n"
+            f"Do NOT add new placeholders. Do NOT remove existing ones. Do NOT duplicate them.\n"
+            f"Do NOT merge or split placeholders. Keep them EXACTLY as they appear."
+        )
 
     return (
         f"{intro}\n\n"
-        f"{tech_rules}\n\n"
+        f"{tech_rules}\n"
+        f"{extra_warning}\n\n"
         f"DATA:\n{blob}"
     )
 
 
 def parse_llm_json_response(content: str) -> dict[str, object]:
+    # Убираем markdown-обёртки (```json ... ```)
     text = re.sub(
-        r"^```json\s*|^```\s*|```$",
+        r"^```(?:json)?\s*\n?|\n?```\s*$",
         "",
         content.strip(),
-        flags=re.IGNORECASE,
+        flags=re.IGNORECASE | re.MULTILINE,
     ).strip()
+
+    # Чиним литеральные newlines внутри JSON-строк:
+    # Заменяем реальный \n между кавычками на экранированный \\n
+    def _fix_newlines_in_strings(m: re.Match) -> str:
+        return m.group(0).replace("\n", "\\n").replace("\r", "\\r")
+
+    text = re.sub(r'"(?:[^"\\]|\\.)*"', _fix_newlines_in_strings, text)
+
     data = json.loads(text)
     if not isinstance(data, dict):
         raise TypeError("LLM response is not a JSON object")
@@ -95,6 +117,41 @@ def placeholders_match(text: str, expected_text: str) -> bool:
     actual_ids = Counter(PLACEHOLDER_PATTERN.findall(text))
     return actual_ids == expected_ids
 
+def split_by_placeholders(masked: str, max_per_chunk: int = 10) -> list[str]:
+    """
+    Разбивает строку с маркерами на чанки по ≤max_per_chunk маркеров.
+    Разбивает по естественным границам (пробел, точка, \\ \\).
+    """
+    matches = list(PLACEHOLDER_PATTERN.finditer(masked))
+    if len(matches) <= max_per_chunk:
+        return [masked]
+
+    chunks = []
+    start = 0
+    count = 0
+
+    for match in matches:
+        count += 1
+        if count == max_per_chunk:
+            end = match.end()
+            # Ищем естественную границу разрыва в следующих 80 символах
+            rest = masked[end:]
+            break_match = re.search(r'(\s*\\\\?\s*\\\\?\s*|[.!?\n]\s+|\s{2,})', rest[:80])
+            if break_match:
+                end += break_match.end()
+            else:
+                # Фоллбэк: ближайший пробел
+                space_match = re.search(r'\s', rest[:50])
+                if space_match:
+                    end += space_match.end()
+            chunks.append(masked[start:end])
+            start = end
+            count = 0
+
+    if start < len(masked):
+        chunks.append(masked[start:])
+
+    return chunks
 
 class BatchLlmEngine(TranslationEngine):
     """Batched JSON translation via any chat-completions API."""
@@ -141,11 +198,26 @@ class BatchLlmEngine(TranslationEngine):
                 callbacks,
             )
             
-            # --- НОВАЯ СИСТЕМА КАСКАДНЫХ ПОВТОРОВ (10 -> 5 -> 1) ---
-            active_retries = RETRY_BATCH_SIZES[:self.retries]  # <--- НОВАЯ СТРОКА (Обрезаем список попыток)
-            
+            # --- СИСТЕМА КАСКАДНЫХ ПОВТОРОВ (10 -> 5 -> 1) ---
+            # Фильтруем безнадёжные строки (>20 маркеров) — их повторять бессмысленно
+            hopeless = [
+                k for k in failed
+                if len(PLACEHOLDER_PATTERN.findall(items[k].masked)) > 20
+            ]
+            if hopeless:
+                callbacks.on_log(
+                    f"⚠️ {self.label}: {len(hopeless)} строк с >20 маркерами — повторы отключены",
+                    "yellow",
+                )
+                # ВАЖНО: НЕ кладём оригинал в result! Иначе сервис закэширует
+                # "английский = английский", и строка никогда не переведётся.
+                # Просто убираем из failed: ретраи бесполезны, а сервис сам
+                # подставит оригинал (без кэша) или отдаст строку в Google-фоллбэк.
+                failed = [k for k in failed if k not in hopeless]
+
+            active_retries = RETRY_BATCH_SIZES[:self.retries]
             for retry_number, retry_batch_size in enumerate(
-                active_retries,  # <--- ЗАМЕНИЛИ RETRY_BATCH_SIZES на active_retries
+                active_retries,
                 start=1,
             ):
                 if not failed or not callbacks.should_run():
@@ -195,66 +267,140 @@ class BatchLlmEngine(TranslationEngine):
         result: dict[str, str],
         callbacks: EngineCallbacks,
     ) -> list[str]:
-        payload = {key: items[key].masked for key in chunk_keys}
-        prompt = build_translation_prompt(
-            payload,
-            target_lang["name"],
-            mode=self.mode,
-            context=self.context,
-            prompt_type=self.prompt_type,
-        )
-        callbacks.on_status(f"⏳ {self.label}: пакет {len(chunk_keys)}...")
-        try:
-            content = self._call_api(prompt, self.max_tokens)
-            if not content:
-                return chunk_keys
+        PLACEHOLDER_THRESHOLD = 20
+        CHUNK_SIZE = 10
 
-            translated = parse_llm_json_response(content)
-            unexpected = set(translated) - set(chunk_keys)
-            if unexpected:
-                callbacks.on_log(
-                    f"⚠️ {self.label}: отброшены лишние JSON-ключи — "
-                    f"{len(unexpected)}",
-                    "yellow",
+        # Разделяем ключи на обычные и сложные
+        normal_keys = []
+        complex_keys = []
+        for key in chunk_keys:
+            ph_count = len(PLACEHOLDER_PATTERN.findall(items[key].masked))
+            if ph_count > PLACEHOLDER_THRESHOLD:
+                complex_keys.append(key)
+            else:
+                normal_keys.append(key)
+
+        all_failed: list[str] = []
+
+        # === ОБРАБОТКА СЛОЖНЫХ СТРОК (>20 маркеров) по чанкам ===
+        for key in complex_keys:
+            item = items[key]
+            ph_total = len(PLACEHOLDER_PATTERN.findall(item.masked))
+            sub_chunks = split_by_placeholders(item.masked, max_per_chunk=CHUNK_SIZE)
+            translated_parts: list[str] = []
+
+            callbacks.on_log(
+                f"🧩 {self.label}: строка с {ph_total} маркерами → {len(sub_chunks)} чанков",
+                "dim",
+            )
+
+            success = True
+            for sub_idx, sub_text in enumerate(sub_chunks, 1):
+                if not callbacks.should_run():
+                    return chunk_keys
+                callbacks.wait_if_paused()
+                if not callbacks.should_run():
+                    return chunk_keys
+
+                # Для чанков НЕ используем JSON — модель отвечает чистым текстом
+                sub_prompt = (
+                    f"Translate this Minecraft quest text to {target_lang['name']}. "
+                    f"Keep ALL [#N#] markers and all backslashes exactly as they are. "
+                    f"Output ONLY the translated text, no explanations.\n\n"
+                    f"TEXT:\n{sub_text}"
                 )
 
-            failed: list[str] = []
-            for key in chunk_keys:
-                raw = translated.get(key)
-                if not isinstance(raw, str):
-                    failed.append(key)
-                    # ЛОГИРОВАНИЕ УТЕРЯННОГО КЛЮЧА
-                    dump_ai_error(items[key].masked, str(raw), "Не прошли проверку (ключ утерян или значение не является текстом)")
-                    continue
-                
-                # ЗАЩИТА ОТ ГАЛЛЮЦИНАЦИЙ: проверяем длину
-                orig_len = len(items[key].masked)
-                if len(raw) > (orig_len * 2.5) + 50:
-                    failed.append(key)
-                    dump_ai_error(items[key].masked, raw, f"Слишком длинный текст ({len(raw)} симв. при оригинале {orig_len} симв.)")
-                    continue
+                chunk_ok = False
+                for _attempt in range(2):  # 2 попытки на КАЖДЫЙ чанк
+                    try:
+                        content = self._call_api(sub_prompt, self.max_tokens)
+                        if not content:
+                            continue
+                        # Убираем возможные ```-обёртки
+                        raw = re.sub(
+                            r"^```[a-z]*\s*|\s*```$",
+                            "",
+                            content.strip(),
+                            flags=re.IGNORECASE | re.MULTILINE,
+                        ).strip()
+                        if raw and placeholders_match(raw, sub_text):
+                            translated_parts.append(raw)
+                            chunk_ok = True
+                            break
+                    except requests.RequestException:
+                        continue
 
-                if not placeholders_match(raw, items[key].masked):
-                    failed.append(key)
-                    # ЛОГИРОВАНИЕ СЛОМАННЫХ МАРКЕРОВ
-                    dump_ai_error(items[key].masked, raw, "Не прошли проверку (потеряны, добавлены или искажены маркеры [#N#])")
-                    continue
+                if not chunk_ok:
+                    callbacks.on_log(
+                        f"❌ {self.label}: чанк {sub_idx}/{len(sub_chunks)} не прошёл проверку",
+                        "red",
+                    )
+                    dump_ai_error(
+                        sub_text,
+                        content if 'content' in locals() else "Нет ответа",
+                        f"Чанк {sub_idx}/{len(sub_chunks)} строки с {ph_total} маркерами",
+                    )
+                    success = False
+                    break
 
-                text = unmask_translation(raw, items[key].mapping)
+            if success and len(translated_parts) == len(sub_chunks):
+                combined_masked = "".join(translated_parts)
+                text = unmask_translation(combined_masked, item.mapping)
                 result[key] = polish_translation(text)
+            else:
+                all_failed.append(key)
+        # === КОНЕЦ ОБРАБОТКИ СЛОЖНЫХ СТРОК ===
 
-            if failed:
-                callbacks.on_log(
-                    f"❌ {self.label}: не прошли проверку — "
-                    f"{len(failed)} строк",
-                    "red",
-                )
-            return failed
-        except (json.JSONDecodeError, TypeError, KeyError) as exc:
-            # ЛОГИРОВАНИЕ СЛОМАННОГО JSON
-            dump_ai_error(prompt, content if 'content' in locals() else "Нет ответа", str(exc))
-            callbacks.on_log(f"❌ {self.label}: неверный JSON (сохранен в ai_error_log.txt)", "red")
-            return chunk_keys
-        except requests.RequestException as exc:
-            callbacks.on_log(f"❌ {self.label}: сеть — {exc}", "red")
-            return chunk_keys
+        # === ОБРАБОТКА ОБЫЧНЫХ СТРОК (≤20 маркеров) — стандартный путь ===
+        if normal_keys:
+            payload = {key: items[key].masked for key in normal_keys}
+            prompt = build_translation_prompt(
+                payload,
+                target_lang["name"],
+                mode=self.mode,
+                context=self.context,
+                prompt_type=self.prompt_type,
+            )
+            callbacks.on_status(f"⏳ {self.label}: пакет {len(normal_keys)}...")
+            try:
+                content = self._call_api(prompt, self.max_tokens)
+                if not content:
+                    return all_failed + normal_keys
+                translated = parse_llm_json_response(content)
+                unexpected = set(translated) - set(normal_keys)
+                if unexpected:
+                    callbacks.on_log(
+                        f"⚠️ {self.label}: отброшены лишние JSON-ключи — {len(unexpected)}",
+                        "yellow",
+                    )
+                for key in normal_keys:
+                    raw = translated.get(key)
+                    if not isinstance(raw, str):
+                        all_failed.append(key)
+                        dump_ai_error(items[key].masked, str(raw), "Ключ утерян или значение не текст")
+                        continue
+                    orig_len = len(items[key].masked)
+                    if len(raw) > (orig_len * 2.5) + 50:
+                        all_failed.append(key)
+                        dump_ai_error(items[key].masked, raw, f"Слишком длинный текст ({len(raw)} при оригинале {orig_len})")
+                        continue
+                    if not placeholders_match(raw, items[key].masked):
+                        all_failed.append(key)
+                        dump_ai_error(items[key].masked, raw, "Потеряны/добавлены маркеры [#N#]")
+                        continue
+                    text = unmask_translation(raw, items[key].mapping)
+                    result[key] = polish_translation(text)
+                if len(all_failed) > len(complex_keys):
+                    callbacks.on_log(
+                        f"❌ {self.label}: не прошли проверку — {len(all_failed) - len(complex_keys)} строк",
+                        "red",
+                    )
+            except (json.JSONDecodeError, TypeError, KeyError) as exc:
+                dump_ai_error(prompt, content if 'content' in locals() else "Нет ответа", str(exc))
+                callbacks.on_log(f"❌ {self.label}: неверный JSON (сохранен в ai_error_log.txt)", "red")
+                return all_failed + normal_keys
+            except requests.RequestException as exc:
+                callbacks.on_log(f"❌ {self.label}: сеть — {exc}", "red")
+                return all_failed + normal_keys
+
+        return all_failed
