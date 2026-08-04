@@ -1,4 +1,5 @@
 import os
+import re
 
 from mineai.constants import LOOSE_JSON_SEARCH_DIRS
 
@@ -29,25 +30,25 @@ def discover_snbt_files(mc_dir: str) -> list[str]:
         return []
     
     result: list[str] = []
-    # Список языковых файлов, которые точно нужно игнорировать
-    ignore_langs = {
-        "ru_ru.snbt", "zh_cn.snbt", "es_es.snbt", "de_de.snbt", 
-        "fr_fr.snbt", "pt_br.snbt", "ko_kr.snbt", "ja_jp.snbt"
-    }
     
     for root, _, files in os.walk(quests):
-        is_lang_dir = "lang" in root.lower().split(os.sep)
+        parts = root.lower().split(os.sep)
         
+        # Если мы находимся внутри папки lang
+        if "lang" in parts:
+            lang_idx = parts.index("lang")
+            # Если мы углубились дальше lang/ (например, lang/pt_br/... или lang/en_us/...)
+            if len(parts) > lang_idx + 1:
+                # Разрешаем искать файлы ТОЛЬКО внутри подпапки en_us, чужие языки пропускаем
+                if parts[lang_idx + 1] != "en_us":
+                    continue
+
         for name in files:
             if name.endswith(".snbt"):
                 nl = name.lower()
                 
-                # Если мы в папке lang, берем ТОЛЬКО en_us.snbt
-                if is_lang_dir and nl != "en_us.snbt":
-                    continue
-                
-                # Отсекаем известные файлы переводов, если они лежат в корне квестов
-                if nl in ignore_langs:
+                # Игнорируем монолитные файлы других языков типа ru_ru.snbt, es_es.snbt (кроме en_us.snbt)
+                if re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", nl) and nl != "en_us.snbt":
                     continue
                     
                 result.append(os.path.join(root, name))
