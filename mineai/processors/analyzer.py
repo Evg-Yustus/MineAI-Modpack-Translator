@@ -59,8 +59,24 @@ class ModpackAnalyzer:
         snbt_files: list[str] = []
         if os.path.isdir(quests_dir) and translate_quests:
             for root, _, files in os.walk(quests_dir):
+                # Отсекаем папки других локализаций (es_es, pt_br и т.д.)
+                parts = root.lower().split(os.sep)
+                if "lang" in parts:
+                    lang_idx = parts.index("lang")
+                    if len(parts) > lang_idx + 1 and parts[lang_idx + 1] != "en_us":
+                        continue
+
                 for name in files:
                     if name.endswith(".snbt"):
+                        nl = name.lower()
+                        # Отсекаем файлы других локализаций в корне (ru_ru, es_es и т.д.)
+                        if re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", nl) and nl != "en_us.snbt":
+                            continue
+                        
+                        # Отсекаем огромный резервный en_us.snbt, если рядом есть папка en_us
+                        if nl == "en_us.snbt" and os.path.isdir(os.path.join(root, "en_us")):
+                            continue
+
                         snbt_files.append(os.path.join(root, name))
         
         # ПОИСК BQ
