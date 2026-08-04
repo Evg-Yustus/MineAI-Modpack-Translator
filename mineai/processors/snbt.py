@@ -1,5 +1,6 @@
 import os
 import shutil
+import re
 
 from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
@@ -16,6 +17,13 @@ class SnbtProcessor:
 
     def process(self, file_path: str, *, target_lang: dict, mode: str) -> None:
         filename = os.path.basename(file_path)
+        
+        # --- НОВЫЙ ФИЛЬТР ---
+        # Если файл называется как локализация (например, es_es.snbt), но это не английский - полностью игнорируем его
+        if re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", filename) and filename != "en_us.snbt":
+            return
+        # --------------------
+        
         is_lang_file = filename == "en_us.snbt"
         
         # Шаг 1. Определяем, куда сохранять и откуда читать
