@@ -44,7 +44,7 @@ class TranslatorApp(ctk.CTk):
         self.after(50, self._drain_ui_queue)
 
         if polish_total:
-            self.log(f"✨ Кэш отполирован: исправлено {polish_total} строк.", "magenta")
+            self.log(f"✨ Кэш проверен: исправлено/удалено ошибок: {polish_total}.", "magenta")
 
     def _build_ui(self) -> None:
         left = ctk.CTkScrollableFrame(self, width=370)

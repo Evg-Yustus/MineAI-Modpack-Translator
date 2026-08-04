@@ -38,6 +38,13 @@ class TranslationCache:
                 return 0
 
             for key, value in list(self._data.items()):
+                api_code, _, source = key.partition("_")
+                # Удаляем "отравленные" пары "английский = английский":
+                # для не-английских языков такой "перевод" — признак сбоя/эха модели
+                if api_code != "en" and value == source:
+                    del self._data[key]
+                    changes += 1
+                    continue
                 polished = polish_translation(value)
                 if polished != value:
                     self._data[key] = polished

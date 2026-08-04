@@ -208,7 +208,11 @@ class TranslationService:
         for key, text in translated.items():
             original = pending[key].original
             result[key] = text
-            self.cache.set(target_lang["api"], original, text)
+            # НЕ кэшируем "перевод", полностью равный оригиналу (кроме EN-цели):
+            # это эхо модели или сбой фоллбэка — такой ключ навсегда запер бы
+            # строку в английском виде
+            if text != original or target_lang["api"] == "en":
+                self.cache.set(target_lang["api"], original, text)
             callbacks.on_log(f" > {original[:40]} -> {text[:40]}", "dim")
 
         for key, item in pending.items():
