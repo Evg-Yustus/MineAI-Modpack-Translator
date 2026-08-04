@@ -16,16 +16,32 @@ from mineai.gui.settings import SettingsWindow
 from mineai.runtime.job import TranslationJob, TranslationOptions
 from mineai.runtime.state import JobState
 
-
+def _resolve_icon_path() -> str | None:
+    """Ищет icon.ico: в ресурсах PyInstaller, рядом с EXE и в cwd."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        candidates.append(os.path.join(base, "icon.ico"))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), "icon.ico"))
+    candidates.append(os.path.join(os.getcwd(), "icon.ico"))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+    
 class TranslatorApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"MineAI Translator v{__version__}")
         self.geometry("1150x850")
 
-        if os.path.exists("icon.ico"):
+        icon_path = _resolve_icon_path()
+        if icon_path:
             try:
-                self.iconbitmap("icon.ico")
+                self.iconbitmap(icon_path)
+                # default= — чтобы дочерние окна (настройки, редактор промптов)
+                # тоже получали нашу иконку, а не перо Tk
+                self.iconbitmap(default=icon_path)
             except tk.TclError:
                 pass
 
@@ -491,5 +507,12 @@ class TranslatorApp(ctk.CTk):
 
 
 def run() -> None:
+    if sys.platform == "win32":
+        try:
+            # Говорим Windows считать нас отдельным приложением —
+            # тогда в панели задач будет наша иконка, а не дефолтная
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MineAI.Translator")
+        except Exception:
+            pass
     app = TranslatorApp()
     app.mainloop()

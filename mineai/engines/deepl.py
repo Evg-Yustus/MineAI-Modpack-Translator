@@ -49,7 +49,7 @@ class DeepLEngine(TranslationEngine):
                     result[key] = polish_translation(raw)
             except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
                 callbacks.on_log(f"❌ Ошибка DeepL: {exc}", "red")
-                for key in chunk_keys:
-                    result[key] = items[key].original
+                    # Ключи при сбое НЕ возвращаем: сервис сам подставит
+                    # оригинал для отсутствующих ключей — без записи в кэш
             time.sleep(0.5)
         return result

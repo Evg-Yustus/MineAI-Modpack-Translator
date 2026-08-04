@@ -65,10 +65,11 @@ class GoogleEngine(TranslationEngine):
                 if not callbacks.should_run():
                     break
                 key, raw = fut.result()
+                # При сбое/остановке НЕ кладём оригинал в result:
+                # иначе сервис закэширует "английский = английский" навсегда.
+                # Сервис сам подставит оригинал для отсутствующих ключей (без кэша).
                 if raw:
                     result[key] = self._finalize(raw, items[key])
-                else:
-                    result[key] = items[key].original
         return result
 
     def _translate_batch_mode(
@@ -115,8 +116,7 @@ class GoogleEngine(TranslationEngine):
                 else:
                     for key in chunk_keys:
                         single = self._request(items[key].masked, api_code, timeout=5, on_log=callbacks.on_log)
-                        result[key] = (
-                            self._finalize(single, items[key]) if single else items[key].original
-                        )
+                        if single:
+                            result[key] = self._finalize(single, items[key])
                         time.sleep(0.3)
         return result

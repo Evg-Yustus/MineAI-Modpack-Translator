@@ -29,7 +29,7 @@ if errorlevel 1 (
 echo    Все файлы корректны.
 
 echo [3/4] PyInstaller...
-python -m PyInstaller --noconfirm --clean --onefile --noconsole --icon="icon.ico" --name "MineAI_Translator" mineai\__main__.py
+python -m PyInstaller --noconfirm --clean --onefile --noconsole --icon="icon.ico" --add-data "icon.ico;." --name "MineAI_Translator" mineai\__main__.py
 if errorlevel 1 (
     echo Ошибка сборки.
     pause
