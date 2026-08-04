@@ -117,7 +117,7 @@ def build_marker_manifest(payload: dict[str, str]) -> str:
     for key, value in payload.items():
         counts = Counter(PLACEHOLDER_PATTERN.findall(value))
         if not counts:
-            lines.append(f'"{key}": NO MARKERS — do not write any [#N#] at all')
+            lines.append(f'"{key}": (plain text, no placeholders)')
             continue
         listing = " ".join(
             f"[#{n}#]" + (f"x{c}" if c > 1 else "")

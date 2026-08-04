@@ -1,3 +1,4 @@
+import re
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
 from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
@@ -74,6 +75,33 @@ class TranslationService:
         result: dict[str, str] = {}
         pending: dict[str, EngineItem] = {}
         cached_count = 0
+        translated: dict[str, str] = {}
+
+        def bump(n: int = 1) -> None:
+            if callbacks.on_progress:
+                callbacks.on_progress(n)
+
+        def is_acceptable(text: str, original: str) -> bool:
+            """Врата качества: мусор не должен попадать в кэш и в файл как «перевод»."""
+            if not isinstance(text, str) or not text.strip():
+                return False
+            low = text.lower()
+            if any(a in low for a in ("no markers", "marker whitelist", "strict rules", "do not translate")):
+                return False  # эхо промпта
+            if text.strip() == original.strip():
+                return target_lang["api"] == "en"  # identity ок только для EN-цели
+            return bool(re.search(target_lang["regex"], text))  # должны быть символы целевого языка
+
+        def commit(key: str, text: str) -> bool:
+            original = pending[key].original
+            if not is_acceptable(text, original):
+                return False  # мусор: не кэшируем → уйдёт в Google-фоллбэк или останется оригиналом
+            result[key] = text
+            translated[key] = text
+            self.cache.set(target_lang["api"], original, text)
+            callbacks.on_log(f" > {original[:40]} -> {text[:40]}", "dim")
+            bump()
+            return True
 
         for key, text in strings.items():
             if not callbacks.should_run():
@@ -86,11 +114,12 @@ class TranslationService:
             if hit is not None:
                 result[key] = hit
                 cached_count += 1
+                bump()
                 continue
-
             masked, mapping = mask_protected_fragments(text)
             if not masked:
                 result[key] = text
+                bump()
                 continue
             pending[key] = EngineItem(key=key, original=text, masked=masked, mapping=mapping)
 
@@ -151,16 +180,16 @@ class TranslationService:
         if current_batch:
             batches.append(current_batch)
             
-        translated = {}
+
         for i, batch in enumerate(batches):
             if not callbacks.should_run():
                 break
             # Выводим в лог информацию, если пачек больше одной
             if len(batches) > 1:
                 callbacks.on_log(f"📦 Отправка пачки {i+1}/{len(batches)} ({len(batch)} строк)...", "dim")
-            
             batch_result = engine.translate_batch(batch, target_lang, callbacks)
-            translated.update(batch_result)
+            for key, text in batch_result.items():
+                commit(key, text)
         # --- КОНЕЦ НОВОГО АЛГОРИТМА ---
 
         # --- НОВЫЙ БЛОК: ПОДСТРАХОВКА GOOGLE ---
@@ -178,9 +207,9 @@ class TranslationService:
                 mode=self.google_mode,
             )
             google_translated = google_engine.translate_batch(failed_pending, target_lang, callbacks)
-            
             # Добавляем успешные переводы Google в общий словарь (они автоматически пойдут в кэш!)
-            translated.update(google_translated)
+            for key, text in google_translated.items():
+                commit(key, text)
         # --- КОНЕЦ БЛОКА ПОДСТРАХОВКИ ---
 
         # --- ДОПОЛНИТЕЛЬНЫЙ ФОНЛБЭК: строки с >10 маркерами, которые ИИ так и не осилил ---
@@ -202,22 +231,14 @@ class TranslationService:
                 google_result = google_fallback.translate_batch(
                     still_failed_complex, target_lang, callbacks
                 )
-                translated.update(google_result)
+                for key, text in google_result.items():
+                    commit(key, text)
         # --- КОНЕЦ ДОПОЛНИТЕЛЬНОГО ФАЛЛБЭКА ---
 
-        for key, text in translated.items():
-            original = pending[key].original
-            result[key] = text
-            # НЕ кэшируем "перевод", полностью равный оригиналу (кроме EN-цели):
-            # это эхо модели или сбой фоллбэка — такой ключ навсегда запер бы
-            # строку в английском виде
-            if text != original or target_lang["api"] == "en":
-                self.cache.set(target_lang["api"], original, text)
-            callbacks.on_log(f" > {original[:40]} -> {text[:40]}", "dim")
-
+        # Проваленные строки: оригинал в файл, но БЕЗ кэша; прогресс учитываем
         for key, item in pending.items():
             if key not in translated:
                 result[key] = item.original
-
+                bump()
         self.cache.save_if_threshold()
         return result

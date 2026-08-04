@@ -17,6 +17,7 @@ class EngineCallbacks:
     wait_if_paused: Callable[[], None]
     on_log: Callable[[str, str], None]  # message, color_tag
     on_status: Callable[[str], None]
+    on_progress: Callable[[int], None] | None = None  # +N готовых строк
 
 
 class TranslationEngine(ABC):

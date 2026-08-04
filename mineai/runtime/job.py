@@ -65,6 +65,8 @@ class TranslationJob:
             on_log=self.on_log,
             # Вклеиваем сообщение от ИИ в наш красивый статус-бар
             on_status=lambda msg: self.on_status(self.state.get_full_status(msg), None),
+            # Прогресс строк теперь двигает сервис, сразу по мере готовности
+            on_progress=self.state.increment_translated,
         )
 
     def run_analysis(self, options: TranslationOptions) -> None:
