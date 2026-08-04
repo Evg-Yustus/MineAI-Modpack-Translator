@@ -66,25 +66,18 @@ def build_translation_prompt(
     intro = intro_template.replace("{lang_name}", lang_name).replace("{context}", context)
     tech_rules = prompts.get("technical", get_default_prompts()["technical"])
 
-    # Подсчёт маркеров в payload для дополнительного предупреждения
-    total_placeholders = sum(
-        len(PLACEHOLDER_PATTERN.findall(v)) for v in payload.values()
-    )
-
-    extra_warning = ""
-    if total_placeholders > 10:
-        extra_warning = (
-            f"\n\nCRITICAL PLACEHOLDER WARNING: This text contains {total_placeholders} placeholders like [#0#], [#1#], etc.\n"
-            f"You MUST keep EVERY SINGLE ONE in the exact same quantity.\n"
-            f"Count them BEFORE and AFTER translation. If the count differs, your answer is WRONG.\n"
-            f"Do NOT add new placeholders. Do NOT remove existing ones. Do NOT duplicate them.\n"
-            f"Do NOT merge or split placeholders. Keep them EXACTLY as they appear."
-        )
+    # --- ЯВНЫЙ СПИСОК МАРКЕРОВ: что именно нельзя менять ---
+    manifest = build_marker_manifest(payload)
+    if "{markers}" in tech_rules:
+        # Если вставил {markers} в редакторе промптов — список встанет туда
+        tech_rules = tech_rules.replace("{markers}", manifest)
+    else:
+        # Иначе блок дописывается сразу после тех. правил
+        tech_rules = f"{tech_rules}\n\n{manifest}"
 
     return (
         f"{intro}\n\n"
-        f"{tech_rules}\n"
-        f"{extra_warning}\n\n"
+        f"{tech_rules}\n\n"
         f"DATA:\n{blob}"
     )
 
@@ -116,6 +109,28 @@ def placeholders_match(text: str, expected_text: str) -> bool:
     expected_ids = Counter(PLACEHOLDER_PATTERN.findall(expected_text))
     actual_ids = Counter(PLACEHOLDER_PATTERN.findall(text))
     return actual_ids == expected_ids
+
+def build_marker_manifest(payload: dict[str, str]) -> str:
+    """Явный чек-лист маркеров для каждого ключа запроса.
+    Модель видит точный список вместо абстрактного правила."""
+    lines: list[str] = []
+    for key, value in payload.items():
+        counts = Counter(PLACEHOLDER_PATTERN.findall(value))
+        if not counts:
+            lines.append(f'"{key}": NO MARKERS — do not write any [#N#] at all')
+            continue
+        listing = " ".join(
+            f"[#{n}#]" + (f"x{c}" if c > 1 else "")
+            for n, c in sorted(counts.items(), key=lambda kv: int(kv[0]))
+        )
+        lines.append(f'"{key}": {listing}')
+    return (
+        "MARKER WHITELIST (exact markers allowed per key):\n"
+        + "\n".join(lines)
+        + "\nRULE: the translation of each key must contain exactly the markers from its list — "
+        "no others (if the list ends at [#11#], writing [#12#] is an error), "
+        "no skips, no renumbering, no repeats (x2 means exactly two copies)."
+    )
 
 def split_by_placeholders(masked: str, max_per_chunk: int = 10) -> list[str]:
     """
@@ -303,10 +318,12 @@ class BatchLlmEngine(TranslationEngine):
                     return chunk_keys
 
                 # Для чанков НЕ используем JSON — модель отвечает чистым текстом
+                chunk_manifest = build_marker_manifest({"TEXT": sub_text})
                 sub_prompt = (
                     f"Translate this Minecraft quest text to {target_lang['name']}. "
-                    f"Keep ALL [#N#] markers and all backslashes exactly as they are. "
+                    f"Do not change or remove backslashes. "
                     f"Output ONLY the translated text, no explanations.\n\n"
+                    f"{chunk_manifest}\n\n"
                     f"TEXT:\n{sub_text}"
                 )
 

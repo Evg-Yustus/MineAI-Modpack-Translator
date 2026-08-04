@@ -193,13 +193,26 @@ class PromptEditorWindow(ctk.CTkToplevel):
         # --- ВКЛАДКА "РИСКОВАННЫЙ РЕЖИМ" ---
         tab_tech = tabs.add("⚙️ Тех. правила (ОПАСНО)")
         lbl_warn = ctk.CTkLabel(
-            tab_tech, 
-            text="ВНИМАНИЕ: Изменение этих правил может сломать парсинг JSON и маркеров!\nИспользуйте только для экспериментов с нестандартными моделями.", 
-            text_color="#e74c3c", 
+            tab_tech,
+            text="ВНИМАНИЕ: Изменение этих правил может сломать парсинг JSON и маркеров!\nИспользуйте только для экспериментов с нестандартными моделями.",
+            text_color="#e74c3c",
             font=("", 12, "bold"),
             justify="left"
         )
         lbl_warn.pack(anchor="w", pady=(0, 5))
+        # --- ПОДСКАЗКА ПРО ПЕРЕМЕННУЮ {markers} ---
+        lbl_vars = ctk.CTkLabel(
+            tab_tech,
+            text=(
+                "Переменная: {markers} — точный список маркеров [#N#] текущего запроса.\n"
+                "Вставь её туда, где модель должна увидеть чек-лист. Если не указать —\n"
+                "список будет автоматически дописан в конец правил."
+            ),
+            text_color="gray",
+            font=("", 11),
+            justify="left",
+        )
+        lbl_vars.pack(anchor="w", pady=(0, 5))
         self.txt_tech = ctk.CTkTextbox(tab_tech, wrap="word", font=("Consolas", 13))
         self.txt_tech.pack(fill="both", expand=True)
         self.txt_tech.insert("1.0", self.prompts.get("technical", get_default_prompts()["technical"]))
