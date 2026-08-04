@@ -1,10 +1,10 @@
 import re
 import time
-
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
+from mineai.engines.http_retry import request_with_retry
 from mineai.text_processing import polish_translation, unmask_translation
 
 
@@ -16,22 +16,20 @@ class GoogleEngine(TranslationEngine):
         self.workers = max(1, min(workers, 10))
         self.mode = mode
 
-    def _request(self, text: str, api_code: str, timeout: int = 10) -> str | None:
-        for _ in range(3):
-            try:
-                r = requests.get(
+    def _request(self, text: str, api_code: str, timeout: int = 10, on_log=None) -> str | None:
+        try:
+            response = request_with_retry(
+                lambda: requests.get(
                     self.API_URL,
                     params={"client": "gtx", "sl": "en", "tl": api_code, "dt": "t", "q": text},
                     timeout=timeout,
-                )
-                if r.status_code == 429:
-                    time.sleep(3)
-                    continue
-                if r.ok:
-                    return "".join(part[0] for part in r.json()[0] if part[0])
-            except (requests.RequestException, KeyError, IndexError, ValueError):
-                time.sleep(1)
-        return None
+                ),
+                operation="Google Translate",
+                on_log=on_log,
+            )
+            return "".join(part[0] for part in response.json()[0] if part[0])
+        except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
+            return None
 
     def _finalize(self, raw: str, item: EngineItem) -> str:
         text = unmask_translation(raw, item.mapping)
@@ -58,7 +56,7 @@ class GoogleEngine(TranslationEngine):
         def work(key: str, masked: str) -> tuple[str, str | None]:
             if not callbacks.should_run():
                 return key, None
-            return key, self._request(masked, api_code)
+            return key, self._request(masked, api_code, on_log=callbacks.on_log)
 
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futures = {pool.submit(work, k, v.masked): k for k, v in items.items()}
@@ -96,7 +94,7 @@ class GoogleEngine(TranslationEngine):
         def translate_chunk(chunk_keys: list[str], text: str) -> tuple[list[str], list[str] | None]:
             if not callbacks.should_run():
                 return chunk_keys, None
-            raw = self._request(text, api_code)
+            raw = self._request(text, api_code, on_log=callbacks.on_log)
             if not raw:
                 return chunk_keys, None
             parts = re.split(r"\s*\|\s*~\s*\|\s*", raw)
@@ -116,7 +114,7 @@ class GoogleEngine(TranslationEngine):
                         result[key] = self._finalize(parts[idx].strip(), items[key])
                 else:
                     for key in chunk_keys:
-                        single = self._request(items[key].masked, api_code, timeout=5)
+                        single = self._request(items[key].masked, api_code, timeout=5, on_log=callbacks.on_log)
                         result[key] = (
                             self._finalize(single, items[key]) if single else items[key].original
                         )

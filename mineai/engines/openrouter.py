@@ -1,23 +1,16 @@
-import time
+import logging
 import requests
-
 from mineai.constants import OPENROUTER_API
+from mineai.engines.http_retry import request_with_retry
 from mineai.engines.llm_common import BatchLlmEngine
 
+logger = logging.getLogger(__name__)
 
 class OpenRouterEngine(BatchLlmEngine):
     def __init__(
-        self,
-        api_key: str,
-        model: str,
-        *,
-        api_url: str = OPENROUTER_API,
-        prompt_type: str = "mods",
-        mode: str = "safe",
-        context: str = "",
-        site_url: str = "",
-        app_name: str = "MineAI Translator",
-        retries: int = 3,
+        self, api_key: str, model: str, *, api_url: str = OPENROUTER_API,
+        prompt_type: str = "mods", mode: str = "safe", context: str = "",
+        site_url: str = "", app_name: str = "MineAI Translator", retries: int = 3,
     ) -> None:
         self.api_url = api_url.strip() or "https://openrouter.ai/api/v1/chat/completions"
         self.api_key = api_key.strip()
@@ -25,63 +18,48 @@ class OpenRouterEngine(BatchLlmEngine):
         self.site_url = site_url.strip()
         self.app_name = app_name.strip() or "MineAI Translator"
         super().__init__(
-            mode=mode,
-            context=context,
-            prompt_type=prompt_type,
-            call_api=self._request,
-            label="OpenRouter",
-            retries=retries,
+            mode=mode, context=context, prompt_type=prompt_type,
+            call_api=self._request, label="OpenRouter", retries=retries,
         )
 
     def _headers(self) -> dict[str, str]:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        if self.site_url:
-            headers["HTTP-Referer"] = self.site_url
-        if self.app_name:
-            headers["X-Title"] = self.app_name
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        if self.site_url: headers["HTTP-Referer"] = self.site_url
+        if self.app_name: headers["X-Title"] = self.app_name
         return headers
 
-    def _request(self, prompt: str, max_tokens: int) -> str | None:
-        max_retries = 3
-        base_delay = 4  # Базовая пауза в 4 секунды между запросами для бесплатных ИИ
-
-        for attempt in range(max_retries):
-            if attempt > 0:
-                time.sleep(base_delay)
-            response = requests.post(
-                self.api_url,
-                headers=self._headers(),
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": max_tokens,
-                },
-                timeout=300,
+    def _request(self, prompt: str, max_tokens: int, on_log=None) -> str | None:
+        # <--- ТА САМАЯ ЗАЩИТА ОТ БЛОКИРОВКИ БЕСПЛАТНЫХ МОДЕЛЕЙ ---
+        def openrouter_delay(attempt: int, exc: Exception) -> float:
+            if isinstance(exc, requests.HTTPError) and exc.response is not None and exc.response.status_code == 429:
+                return 15.0 * attempt  # 15, 30, 45 секунд для лимитов
+            return 4.0 * attempt       # Обычная задержка для других ошибок сети
+            
+        try:
+            response = request_with_retry(
+                lambda: requests.post(
+                    self.api_url, headers=self._headers(),
+                    json={"model": self.model, "messages": [{"role": "user", "content": prompt}],
+                          "temperature": 0.1, "max_tokens": max_tokens},
+                    timeout=300,
+                ),
+                operation="OpenRouter",
+                attempts=4,
+                on_log=on_log,
+                delay_func=openrouter_delay, # <--- Передаем нашу умную задержку
             )
-            
-            # Если словили лимит (429), ждем дольше и пробуем снова
-            if response.status_code == 429:
-                wait_time = 15 * (attempt + 1)
-                print(f"\n[OpenRouter] Поймали лимит 429. Ждем {wait_time} сек. (Попытка {attempt + 1}/{max_retries})...")
-                time.sleep(wait_time)
-                continue
+        except requests.RequestException as exc:
+            if on_log: on_log(f"❌ OpenRouter сеть: {exc}", "red")
+            return None
 
-            if not response.ok:
-                detail = response.text[:200] if response.text else response.reason
-                raise requests.HTTPError(f"{response.status_code}: {detail}", response=response)
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            logger.error("OpenRouter invalid JSON: %s", exc)
+            return None
             
-            data = response.json()
-            content = data.get("choices", [{}])[0].get("message", {}).get("content")
+        if not isinstance(content, str) or not content.strip():
+            if on_log: on_log("⚠️ OpenRouter вернул пустой ответ (фильтр модели)", "yellow")
+            return None
             
-            if content is None:
-                print("\n[Предупреждение] OpenRouter вернул пустой ответ (возможно, сработал фильтр модели).")
-                return None
-                
-            return content.strip()
-            
-        print("\n[Ошибка] Не удалось получить ответ: бесплатная модель слишком перегружена.")
-        return None
+        return content.strip()
