@@ -42,7 +42,14 @@ class JobState:
             self.current_file_type = file_type
             self.current_file_done = done
             self.total_files = total
-
+            
+    def line_progress(self) -> float:
+        """Прогресс 0..1 по строкам — для шкалы."""
+        with self._lock:
+            if self.total_strings <= 0:
+                return 0.0
+            return min(self.translated_strings / self.total_strings, 1.0)    
+    
     def eta_text(self) -> str:
         if not self.start_time or self.translated_strings == 0:
             return "расчёт..."

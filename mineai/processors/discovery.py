@@ -46,13 +46,14 @@ def discover_snbt_files(mc_dir: str) -> list[str]:
         for name in files:
             if name.endswith(".snbt"):
                 nl = name.lower()
-                
                 # Игнорируем монолитные файлы других языков типа ru_ru.snbt, es_es.snbt (кроме en_us.snbt)
                 if re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", nl) and nl != "en_us.snbt":
                     continue
-                    
+                # Пропускаем монолитный en_us.snbt, если рядом есть папка en_us
+                # с разбитыми квестами (иначе квесты считаются дважды: монолит + папка)
+                if nl == "en_us.snbt" and os.path.isdir(os.path.join(root, "en_us")):
+                    continue
                 result.append(os.path.join(root, name))
-                
     return result
 
 

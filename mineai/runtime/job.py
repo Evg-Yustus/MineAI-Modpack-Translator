@@ -203,7 +203,7 @@ class TranslationJob:
                 self.state.update_file_progress("Моды", done, total_items)
                 self.on_status(
                     self.state.get_full_status(),
-                    done / max(total_items, 1),
+                    self.state.line_progress(),
                 )
 
             for path in loose:
@@ -222,7 +222,7 @@ class TranslationJob:
                 self.state.update_file_progress("Словари", done, total_items)
                 self.on_status(
                     self.state.get_full_status(),
-                    done / max(total_items, 1),
+                    self.state.line_progress(),
                 )
 
             for path in snbt:
@@ -234,7 +234,7 @@ class TranslationJob:
                 self.state.update_file_progress("Квесты", done, total_items)
                 self.on_status(
                     self.state.get_full_status(),
-                    done / max(total_items, 1),
+                    self.state.line_progress(),
                 )
 
             for path in bq_files:
@@ -246,7 +246,7 @@ class TranslationJob:
                 self.state.update_file_progress("BQ", done, total_items)
                 self.on_status(
                     self.state.get_full_status(),
-                    done / max(total_items, 1),
+                    self.state.line_progress(),
                 )
 
             cache.save()
