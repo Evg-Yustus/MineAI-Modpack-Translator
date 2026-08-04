@@ -330,6 +330,29 @@ class JarProcessor:
                 lines_out.append(line)
                 pending[str(idx)] = line
 
+        # --- ФИКС 2: Режим пропуска (skip) ---
+        total_translatable = sum(
+            1 for line in en_text.split("\n")
+            if line.strip()
+            and not line.strip().startswith("<")
+            and not line.strip().startswith("![")
+            and looks_like_source_language(line)
+            and not is_technical_term(line)
+        )
+        
+        if mode == "skip" and total_translatable > 0 and len(pending) <= total_translatable * 0.1:
+            if tr_key in locale_files:
+                raw = zin.read(locale_files[tr_key])
+                if output_mode == "resourcepack" and pack_writer:
+                    pack_writer.write(tr_path, raw)
+                    return True
+                elif zout:
+                    zout.writestr(tr_path, raw)
+                    written_inplace.add(tr_path)
+                    return True
+            return False
+        # --------------------------------------
+
         if not pending:
             payload = "\n".join(lines_out).encode("utf-8")
             if output_mode == "resourcepack" and pack_writer:
@@ -337,7 +360,7 @@ class JarProcessor:
             elif zout:
                 zout.writestr(tr_path, payload)
                 written_inplace.add(tr_path)
-            return bool(pending)
+            return True  # <--- ФИКС 1: Возвращаем True вместо bool(pending)
 
         self.callbacks.on_log(f"⚡ Перевод {mod_name} [Книга MD] — {len(pending)} строк", "magenta")
         translated = self.service.translate_dict(pending, target_lang, self.callbacks, context=mod_name)
