@@ -1,3 +1,6 @@
+import ctypes
+import sys
+
 import customtkinter as ctk
 from tkinter import filedialog
 
@@ -200,6 +203,28 @@ class PromptEditorWindow(ctk.CTkToplevel):
         self.txt_tech = ctk.CTkTextbox(tab_tech, wrap="word", font=("Consolas", 13))
         self.txt_tech.pack(fill="both", expand=True)
         self.txt_tech.insert("1.0", self.prompts.get("technical", get_default_prompts()["technical"]))
+
+        # Фикс Ctrl+C/V/A/X для кириллической раскладки
+        def _fix_ctrl_for_textbox(widget):
+            def handler(event):
+                ctrl = bool(event.state & 4)
+                if sys.platform == "win32":
+                    try:
+                        ctrl = ctrl or bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+                    except Exception:
+                        pass
+                if not ctrl:
+                    return None
+                KEY_ACTIONS = {67: "<<Copy>>", 86: "<<Paste>>", 65: "<<SelectAll>>", 88: "<<Cut>>"}
+                if event.keycode in KEY_ACTIONS:
+                    event.widget.event_generate(KEY_ACTIONS[event.keycode])
+                    return "break"
+                return None
+            target = getattr(widget, "_textbox", widget)
+            target.bind("<Key>", handler, add="+")
+
+        for widget in [self.txt_mods, self.txt_books, self.txt_quests, self.txt_tech]:
+            _fix_ctrl_for_textbox(widget)
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=10, pady=10)

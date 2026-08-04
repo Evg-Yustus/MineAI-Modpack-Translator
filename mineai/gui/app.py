@@ -2,6 +2,8 @@ import os
 import queue
 import threading
 import tkinter as tk
+import sys
+import ctypes
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -210,9 +212,19 @@ class TranslatorApp(ctk.CTk):
         self.textbox.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Функция для защиты от печати, но с разрешением на копирование
+        def _is_ctrl_pressed() -> bool:
+            """Надёжная проверка Ctrl на Windows — не зависит от раскладки."""
+            if sys.platform == "win32":
+                try:
+                    return bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+                except Exception:
+                    return False
+            return False
+
+        # Функция для защиты от печати, но с разрешением на копирование
         def prevent_typing(event):
             # Разрешаем системные сочетания с Ctrl (например, Ctrl+C, Ctrl+A)
-            if event.state & 4:
+            if event.state & 4 or _is_ctrl_pressed():
                 return None
             # Разрешаем стрелочки для навигации
             if event.keysym in ["Up", "Down", "Left", "Right", "Prior", "Next", "Home", "End"]:

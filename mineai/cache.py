@@ -70,7 +70,7 @@ class TranslationCache:
             if self._dirty:
                 self._flush_unlocked()
 
-        def save_if_threshold(self, every: int = 500) -> None:
+    def save_if_threshold(self, every: int = 500) -> None:
         with self._lock:
             if self._dirty and (len(self._data) - self._last_saved_count) >= every:
                 self._flush_unlocked()
