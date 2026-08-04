@@ -42,7 +42,6 @@ class PackWriter:
         self.rp_handle = zipfile.ZipFile(self.rp_zip_path, "a", compression=zipfile.ZIP_DEFLATED)
 
         dp_name = os.path.basename(self.rp_zip_path).replace(".zip", "_Datapack.zip")
-        self.dp_zip_path = os.path.join(dp_dir, dp_name)
         self.dp_zip_path = self._unique_path(dp_dir, dp_name)
         self._create_zip(self.dp_zip_path, fmt["dp"], f"{dp_name} - MineAI")
         self.dp_handle = zipfile.ZipFile(self.dp_zip_path, "a", compression=zipfile.ZIP_DEFLATED)

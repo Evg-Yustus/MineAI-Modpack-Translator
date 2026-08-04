@@ -49,8 +49,8 @@ class OpenRouterEngine(BatchLlmEngine):
         base_delay = 4  # Базовая пауза в 4 секунды между запросами для бесплатных ИИ
 
         for attempt in range(max_retries):
-            time.sleep(base_delay)
-            
+            if attempt > 0:
+                time.sleep(base_delay)
             response = requests.post(
                 self.api_url,
                 headers=self._headers(),

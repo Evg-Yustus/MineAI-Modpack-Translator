@@ -256,8 +256,7 @@ class TranslationJob:
         finally:
             if pack_writer:
                 pack_writer.close()
-            if options.engine == "ai":
-                pass  # keep AI running for user
+            # AI-сервер (KoboldCPP) остаётся запущенным для последующих задач.
 
         if failed:
             self.on_status("Ошибка перевода", 1.0)

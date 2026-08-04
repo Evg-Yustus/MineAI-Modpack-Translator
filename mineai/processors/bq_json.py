@@ -15,10 +15,7 @@ class BQProcessor:
 
     def process(self, file_path: str, *, target_lang: dict, mode: str) -> None:
         backup = file_path + ".bak"
-        if not os.path.exists(backup):
-            shutil.copy2(file_path, backup)
-
-        source_path = file_path if mode == "append" else backup
+        source_path = backup if (mode == "force" and os.path.exists(backup)) else file_path
         target_regex = target_lang["regex"]
 
         try:
@@ -28,17 +25,13 @@ class BQProcessor:
             self.callbacks.on_log(f"❌ Ошибка чтения {file_path}: {exc}", "red")
             return
 
-        # Ищем строки для перевода. В BetterQuesting они лежат в properties -> betterquesting
+        # Ищем строки для перевода...
         strings_to_translate = {}
-        
-        # Получаем ключи безопасно (так как там могут быть цифры типа properties:10)
         props_key = next((k for k in data if k.startswith("properties")), None)
         if props_key and isinstance(data[props_key], dict):
             bq_key = next((k for k in data[props_key] if k.startswith("betterquesting")), None)
             if bq_key and isinstance(data[props_key][bq_key], dict):
                 bq_data = data[props_key][bq_key]
-                
-                # Ищем name и desc
                 for key_prefix in ["name", "desc"]:
                     actual_key = next((k for k in bq_data if k.startswith(key_prefix)), None)
                     if actual_key and isinstance(bq_data[actual_key], str):
@@ -48,6 +41,10 @@ class BQProcessor:
 
         if not strings_to_translate:
             return
+
+        # Бэкап создаётся ТОЛЬКО когда перевод действительно нужен
+        if not os.path.exists(backup):
+            shutil.copy2(file_path, backup)
 
         name = os.path.basename(os.path.dirname(file_path)) + "/" + os.path.basename(file_path)
         self.callbacks.on_log(f"⚡ Перевод BQ [{name}] — {len(strings_to_translate)} строк", "yellow")

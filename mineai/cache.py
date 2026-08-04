@@ -17,6 +17,7 @@ class TranslationCache:
         self._data: dict[str, str] = {}
         self._lock = threading.RLock()
         self._dirty = False
+        self._last_saved_count = 0
         self.polish_changes = self.load_and_polish()
 
     def load_and_polish(self) -> int:
@@ -69,10 +70,11 @@ class TranslationCache:
             if self._dirty:
                 self._flush_unlocked()
 
-    def save_if_threshold(self, every: int = 500) -> None:
+        def save_if_threshold(self, every: int = 500) -> None:
         with self._lock:
-            if self._dirty and len(self._data) % every == 0:
+            if self._dirty and (len(self._data) - self._last_saved_count) >= every:
                 self._flush_unlocked()
+                self._last_saved_count = len(self._data)
 
     def _flush_unlocked(self) -> None:
         payload = json.dumps(self._data, ensure_ascii=False, indent=2)
