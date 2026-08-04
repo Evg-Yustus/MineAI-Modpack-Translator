@@ -232,6 +232,25 @@ class TranslatorApp(ctk.CTk):
             return "break" # Блокируем всё остальное
 
         self.textbox.bind("<Key>", prevent_typing)
+
+        # Фикс Ctrl+C/A для кириллицы на внутреннем виджете
+        def _fix_ctrl_copy(event):
+            ctrl = bool(event.state & 4)
+            if sys.platform == "win32":
+                try:
+                    ctrl = ctrl or bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+                except Exception:
+                    pass
+            if not ctrl:
+                return None
+            KEY_ACTIONS = {67: "<<Copy>>", 65: "<<SelectAll>>"}
+            if event.keycode in KEY_ACTIONS:
+                event.widget.event_generate(KEY_ACTIONS[event.keycode])
+                return "break"
+            return None
+
+        _inner = getattr(self.textbox, "_textbox", self.textbox)
+        _inner.bind("<Key>", _fix_ctrl_copy, add="+")
         for tag, color in [
             ("green", "#2ecc71"),
             ("yellow", "#f1c40f"),
