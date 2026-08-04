@@ -37,14 +37,13 @@ class AiLauncher:
                     model,
                     "--port",
                     "5001",
-                    "--quiet",
+                    
                     "--contextsize",
                     "4096",
                     "--gpulayers",
                     gpu,
                 ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                
             )
         except OSError as exc:
             on_log(f"❌ Ошибка запуска ИИ: {exc}", "red")

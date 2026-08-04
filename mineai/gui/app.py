@@ -206,8 +206,20 @@ class TranslatorApp(ctk.CTk):
         
         right = ctk.CTkFrame(self)
         right.pack(side="right", fill="both", expand=True, padx=(0, 10), pady=10)
-        self.textbox = ctk.CTkTextbox(right, state="disabled", font=("Consolas", 13))
+        self.textbox = ctk.CTkTextbox(right, font=("Consolas", 13)) # Убрали state="disabled"
         self.textbox.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Функция для защиты от печати, но с разрешением на копирование
+        def prevent_typing(event):
+            # Разрешаем системные сочетания с Ctrl (например, Ctrl+C, Ctrl+A)
+            if event.state & 4:
+                return None
+            # Разрешаем стрелочки для навигации
+            if event.keysym in ["Up", "Down", "Left", "Right", "Prior", "Next", "Home", "End"]:
+                return None
+            return "break" # Блокируем всё остальное
+
+        self.textbox.bind("<Key>", prevent_typing)
         for tag, color in [
             ("green", "#2ecc71"),
             ("yellow", "#f1c40f"),
@@ -307,12 +319,12 @@ class TranslatorApp(ctk.CTk):
     def log(self, message: str, tag: str = "white") -> None:
         if not self._ensure_ui_thread(self.log, message, tag):
             return
-        self.textbox.configure(state="normal")
+        
         at_bottom = self.textbox.yview()[1] >= 0.99
         self.textbox.insert("end", message + "\n", tag)
         if self.auto_scroll or at_bottom:
             self.textbox.see("end")
-        self.textbox.configure(state="disabled")
+        
         
         # Запись в общий текстовый лог
         try:
@@ -332,7 +344,7 @@ class TranslatorApp(ctk.CTk):
             pct,
         ):
             return
-        self.textbox.configure(state="normal")
+        
         at_bottom = self.textbox.yview()[1] >= 0.99
         self.textbox.insert("end", f"{icon} {name[:34]:<35}", "cyan")
         self.textbox.insert("end", f"[{kind}]".ljust(15), "magenta")
@@ -341,7 +353,7 @@ class TranslatorApp(ctk.CTk):
         self.textbox.insert("end", f"{pct}%\n", color)
         if self.auto_scroll or at_bottom:
             self.textbox.see("end")
-        self.textbox.configure(state="disabled")
+        
 
     def set_status(self, text: str, progress: float | None) -> None:
         if not self._ensure_ui_thread(self.set_status, text, progress):
@@ -380,9 +392,9 @@ class TranslatorApp(ctk.CTk):
         self.set_status("🛑 Остановка...", 1.0)
 
     def _clear_log(self) -> None:
-        self.textbox.configure(state="normal")
+        
         self.textbox.delete("1.0", "end")
-        self.textbox.configure(state="disabled")
+        
 
     def _start_analysis(self) -> None:
         self._lock_ui(True)
