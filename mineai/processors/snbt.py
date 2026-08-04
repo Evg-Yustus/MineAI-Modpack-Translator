@@ -18,28 +18,44 @@ class SnbtProcessor:
     def process(self, file_path: str, *, target_lang: dict, mode: str) -> None:
         filename = os.path.basename(file_path)
         
-        # --- НОВЫЙ ФИЛЬТР ---
         # Если файл называется как локализация (например, es_es.snbt), но это не английский - полностью игнорируем его
         if re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", filename) and filename != "en_us.snbt":
             return
-        # --------------------
+            
+        # --- НОВАЯ ЛОГИКА: ИГНОРИРОВАНИЕ ОГРОМНОГО ФАЙЛА ПРИ НАЛИЧИИ ПАПКИ ---
+        if filename == "en_us.snbt":
+            dir_name = os.path.dirname(file_path)
+            en_us_folder = os.path.join(dir_name, "en_us")
+            # Если рядом есть папка en_us (с разбитыми квестами), игнорируем этот гигантский резервный файл
+            if os.path.isdir(en_us_folder):
+                self.callbacks.on_log(f"⏩ Пропуск {filename} (найдена папка с квестами)", "dim")
+                return
+        # ----------------------------------------------------------------------
         
         is_lang_file = filename == "en_us.snbt"
+        mc_code = target_lang["file"]
         
         # Шаг 1. Определяем, куда сохранять и откуда читать
         if is_lang_file:
-            mc_code = target_lang["file"]
             target_file_path = os.path.join(os.path.dirname(file_path), f"{mc_code}.snbt")
             
             # Для en_us мы всегда берем оригинал как шаблон, он не должен меняться
             source_path = file_path
         else:
-            # Для старых версий квестов (chapter.snbt) переводим на месте с бэкапом
-            target_file_path = file_path
-            backup = file_path + ".bak"
-            if not os.path.exists(backup):
-                shutil.copy2(file_path, backup)
-            source_path = file_path if mode == "append" else backup
+            # Для разбитых квестов (например, внутри папки en_us/chapters/)
+            # Заменяем en_us в пути на целевой язык (например, ru_ru), чтобы не сломать английские исходники
+            target_file_path = file_path.replace("\\en_us\\", f"\\{mc_code}\\").replace("/en_us/", f"/{mc_code}/")
+            
+            if target_file_path != file_path:
+                # Если путь успешно изменен на ru_ru, бэкап не нужен, берем оригинал
+                os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
+                source_path = file_path
+            else:
+                # Старое поведение для файлов, лежащих в корне (перевод на месте с бэкапом)
+                backup = file_path + ".bak"
+                if not os.path.exists(backup):
+                    shutil.copy2(file_path, backup)
+                source_path = file_path if mode == "append" else backup
 
         target_regex = target_lang["regex"]
 
@@ -49,6 +65,8 @@ class SnbtProcessor:
         except OSError as exc:
             self.callbacks.on_log(f"❌ Ошибка чтения {source_path}: {exc}", "red")
             return
+            
+        
 
         # Шаг 2. Достаем строки и переводим
         skip_regex = target_regex if mode == "append" else None
