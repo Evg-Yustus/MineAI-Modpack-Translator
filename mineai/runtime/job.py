@@ -63,9 +63,7 @@ class TranslationJob:
             should_run=self.state.should_run,
             wait_if_paused=self.state.wait_if_paused,
             on_log=self.on_log,
-            # Вклеиваем сообщение от ИИ в наш красивый статус-бар
             on_status=lambda msg: self.on_status(self.state.get_full_status(msg), None),
-            # Прогресс строк теперь двигает сервис, сразу по мере готовности
             on_progress=self.state.increment_translated,
         )
 
@@ -128,7 +126,7 @@ class TranslationJob:
 
         self.on_log("📊 Подсчёт строк...", "yellow")
         estimator = StringEstimator(self.state)
-        self.state.total_strings = estimator.estimate(
+        estimated_count = estimator.estimate(
             jars,
             loose,
             snbt,
@@ -140,7 +138,8 @@ class TranslationJob:
             translate_quests=options.translate_quests,
             smart_glue=self.config.getboolean("GENERAL", "smart_glue"),
         )
-        self.on_log(f"   Найдено: {self.state.total_strings}", "cyan")
+        self.state.set_total_strings(estimated_count)
+        self.on_log(f"   Найдено: {estimated_count}", "cyan")
 
         if options.engine == "ai" and options.ai_provider == "local":
             if not self.ai_launcher.ensure_running(
@@ -179,8 +178,7 @@ class TranslationJob:
         snbt_proc = SnbtProcessor(service, self.state, callbacks)
         bq_proc = BQProcessor(service, self.state, callbacks)
 
-        self.state.start_time = time.time()
-        self.state.translated_strings = 0
+        self.state.begin_progress()
         self.on_log(f"🚀 ЗАПУСК ПЕРЕВОДА ({lang['name']})...\n", "yellow")
 
         total_items = len(jars) + len(loose) + len(snbt) + len(bq_files)
@@ -258,7 +256,6 @@ class TranslationJob:
         finally:
             if pack_writer:
                 pack_writer.close()
-            # AI-сервер (KoboldCPP) остаётся запущенным для последующих задач.
 
         if failed:
             self.on_status("Ошибка перевода", 1.0)

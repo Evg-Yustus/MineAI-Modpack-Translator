@@ -224,7 +224,7 @@ class TranslatorApp(ctk.CTk):
         
         right = ctk.CTkFrame(self)
         right.pack(side="right", fill="both", expand=True, padx=(0, 10), pady=10)
-        self.textbox = ctk.CTkTextbox(right, font=("Consolas", 13)) # Убрали state="disabled"
+        self.textbox = ctk.CTkTextbox(right, font=("Consolas", 13))
         self.textbox.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Функция для защиты от печати, но с разрешением на копирование
@@ -372,7 +372,6 @@ class TranslatorApp(ctk.CTk):
         if self.auto_scroll or at_bottom:
             self.textbox.see("end")
         
-        
         # Запись в общий текстовый лог
         try:
             with open("mineai_log.txt", "a", encoding="utf-8") as f:
@@ -420,8 +419,8 @@ class TranslatorApp(ctk.CTk):
         self.btn_pause.configure(state=rev)
 
     def _toggle_pause(self) -> None:
-        self.job_state.is_paused = not self.job_state.is_paused
-        if self.job_state.is_paused:
+        is_paused = self.job_state.toggle_pause()
+        if is_paused:
             self.btn_pause.configure(text="▶ ПРОДОЛЖИТЬ", fg_color="#17a2b8", text_color="white")
             self.log("⏸ Пауза", "yellow")
         else:
@@ -439,14 +438,11 @@ class TranslatorApp(ctk.CTk):
         self.set_status("🛑 Остановка...", 1.0)
 
     def _clear_log(self) -> None:
-        
         self.textbox.delete("1.0", "end")
         
-
     def _start_analysis(self) -> None:
         self._lock_ui(True)
-        self.job_state.is_running = True
-        self.job_state.is_paused = False
+        self.job_state.start()
         self._clear_log()
         self._job = self._job_instance()
         options = self._translation_options()
@@ -460,7 +456,7 @@ class TranslatorApp(ctk.CTk):
             if self._job is not None:
                 self._job.run_analysis(options)
         finally:
-            self.job_state.is_running = False
+            self.job_state.finish()
             self._job = None
             self._lock_ui(False)
 
@@ -470,10 +466,9 @@ class TranslatorApp(ctk.CTk):
             return
         if self.var_engine.get() == "ai":
             settings.set("AI", "ai_provider", self.var_ai_provider.get())
-            settings.set("AI", "fallback_google", self.var_ai_fallback.get()) # <-- СОХРАНЯЕМ ВЫБОР
+            settings.set("AI", "fallback_google", self.var_ai_fallback.get())
         self._lock_ui(True)
-        self.job_state.is_running = True
-        self.job_state.is_paused = False
+        self.job_state.start()
         self.btn_pause.configure(text="⏸ ПАУЗА", fg_color="#ffc107", text_color="black")
         self._clear_log()
         self._job = self._job_instance()
@@ -482,7 +477,6 @@ class TranslatorApp(ctk.CTk):
             target=lambda: self._run_translation_thread(options),
             daemon=True,
         ).start()
-    
     
     def _open_log_file(self) -> None:
         log_path = "mineai_log.txt"
@@ -495,16 +489,14 @@ class TranslatorApp(ctk.CTk):
         else:
             self.log("❌ Лог-файл еще не создан.", "yellow")
             
-            
     def _run_translation_thread(self, options: TranslationOptions) -> None:
         try:
             if self._job is not None:
                 self._job.run_translation(options)
         finally:
-            self.job_state.is_running = False
+            self.job_state.finish()
             self._job = None
             self._lock_ui(False)
-
 
 def run() -> None:
     if sys.platform == "win32":
