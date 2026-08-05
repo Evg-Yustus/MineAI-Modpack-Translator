@@ -35,16 +35,12 @@ class LooseJsonProcessor:
         tr_internal = internal.replace("en_us.json", f"{target_lang['file']}.json")
         tr_disk = file_path.replace("en_us.json", f"{target_lang['file']}.json")
 
-        try:
-            with open(file_path, encoding="utf-8") as f:
-                en_data = load_lenient_json(f.read().encode("utf-8"))
-            tr_data = {}
-            if os.path.exists(tr_disk):
-                with open(tr_disk, encoding="utf-8") as f:
-                    tr_data = load_lenient_json(f.read().encode("utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            self.callbacks.on_log(f"❌ Ошибка словаря {file_path}: {exc}", "red")
-            return
+        with open(file_path, encoding="utf-8") as f:
+            en_data = load_lenient_json(f.read().encode("utf-8"))
+        tr_data = {}
+        if os.path.exists(tr_disk):
+            with open(tr_disk, encoding="utf-8") as f:
+                tr_data = load_lenient_json(f.read().encode("utf-8"))
 
         pending = collect_lang_keys_to_translate(en_data, tr_data, mode, target_lang["regex"])
         total = count_translatable_lang_entries(en_data)

@@ -33,18 +33,37 @@ class PackWriter:
         if not safe_name.lower().endswith(".zip"):
             safe_name += ".zip"
 
-        self.rp_zip_path = self._unique_path(rp_dir, safe_name)
-        self._create_zip(
-            self.rp_zip_path,
-            fmt["rp"],
-            f"{os.path.basename(self.rp_zip_path)} - MineAI",
-        )
-        self.rp_handle = zipfile.ZipFile(self.rp_zip_path, "a", compression=zipfile.ZIP_DEFLATED)
+        try:
+            self.rp_zip_path = self._unique_path(rp_dir, safe_name)
+            self._create_zip(
+                self.rp_zip_path,
+                fmt["rp"],
+                f"{os.path.basename(self.rp_zip_path)} - MineAI",
+            )
+            self.rp_handle = zipfile.ZipFile(
+                self.rp_zip_path,
+                "a",
+                compression=zipfile.ZIP_DEFLATED,
+            )
 
-        dp_name = os.path.basename(self.rp_zip_path).replace(".zip", "_Datapack.zip")
-        self.dp_zip_path = self._unique_path(dp_dir, dp_name)
-        self._create_zip(self.dp_zip_path, fmt["dp"], f"{dp_name} - MineAI")
-        self.dp_handle = zipfile.ZipFile(self.dp_zip_path, "a", compression=zipfile.ZIP_DEFLATED)
+            dp_name = os.path.basename(self.rp_zip_path).replace(
+                ".zip",
+                "_Datapack.zip",
+            )
+            self.dp_zip_path = self._unique_path(dp_dir, dp_name)
+            self._create_zip(
+                self.dp_zip_path,
+                fmt["dp"],
+                f"{dp_name} - MineAI",
+            )
+            self.dp_handle = zipfile.ZipFile(
+                self.dp_zip_path,
+                "a",
+                compression=zipfile.ZIP_DEFLATED,
+            )
+        except Exception:
+            self._cleanup_partial_archives()
+            raise
 
     @staticmethod
     def _unique_path(directory: str, filename: str) -> str:
@@ -78,12 +97,54 @@ class PackWriter:
             handle.writestr(internal_path, data)
             self.written.add(internal_path)
 
+    @staticmethod
+    def _validate_zip(path: str | None) -> None:
+        if not path:
+            return
+        with zipfile.ZipFile(path, "r") as archive:
+            bad_entry = archive.testzip()
+            if bad_entry is not None:
+                raise zipfile.BadZipFile(
+                    f"CRC check failed for {bad_entry} in {path}"
+                )
+
+    def _close_handles(self) -> list[Exception]:
+        errors: list[Exception] = []
+        for attribute in ("rp_handle", "dp_handle"):
+            handle = getattr(self, attribute)
+            if handle is None:
+                continue
+            try:
+                handle.close()
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                setattr(self, attribute, None)
+        return errors
+
+    def _remove_output_archives(self) -> None:
+        for path in (self.rp_zip_path, self.dp_zip_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    def _cleanup_partial_archives(self) -> None:
+        self._close_handles()
+        self._remove_output_archives()
+
     def close(self) -> tuple[str | None, str | None]:
         rp, dp = self.rp_zip_path, self.dp_zip_path
-        if self.rp_handle:
-            self.rp_handle.close()
-            self.rp_handle = None
-        if self.dp_handle:
-            self.dp_handle.close()
-            self.dp_handle = None
+        errors = self._close_handles()
+        if not errors:
+            for path in (rp, dp):
+                try:
+                    self._validate_zip(path)
+                except Exception as exc:
+                    errors.append(exc)
+                    break
+        if errors:
+            self._remove_output_archives()
+            raise errors[0]
         return rp, dp

@@ -28,7 +28,13 @@ class TranslationCache:
                 return 0
             try:
                 with open(self.filepath, encoding="utf-8") as f:
-                    self._data = json.load(f)
+                    loaded = json.load(f)
+                if not self._is_valid_payload(loaded):
+                    self._backup_corrupt_file()
+                    self._data = {}
+                    return 0
+                self._data = loaded
+                self._last_saved_count = len(self._data)
             except json.JSONDecodeError:
                 self._backup_corrupt_file()
                 self._data = {}
@@ -39,12 +45,13 @@ class TranslationCache:
 
             for key, value in list(self._data.items()):
                 api_code, _, source = key.partition("_")
-                # Удаляем "отравленные" пары "английский = английский":
-                # для не-английских языков такой "перевод" — признак сбоя/эха модели
+                # Не сохраняем отравленные пары, где перевод равен исходнику
+                # для языка, отличного от английского.
                 if api_code != "en" and value == source:
                     del self._data[key]
                     changes += 1
                     continue
+
                 polished = polish_translation(value)
                 if polished != value:
                     self._data[key] = polished
@@ -87,6 +94,14 @@ class TranslationCache:
         payload = json.dumps(self._data, ensure_ascii=False, indent=2)
         atomic_write_text(self.filepath, payload)
         self._dirty = False
+        self._last_saved_count = len(self._data)
+
+    @staticmethod
+    def _is_valid_payload(payload: object) -> bool:
+        return isinstance(payload, dict) and all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in payload.items()
+        )
 
     def _backup_corrupt_file(self) -> None:
         backup = self.filepath + ".corrupt"

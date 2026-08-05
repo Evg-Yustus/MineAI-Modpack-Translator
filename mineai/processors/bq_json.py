@@ -4,6 +4,7 @@ import shutil
 
 from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
+from mineai.io_utils import atomic_write_text
 from mineai.runtime.state import JobState
 from mineai.text_processing import already_translated
 
@@ -18,12 +19,8 @@ class BQProcessor:
         source_path = backup if (mode == "force" and os.path.exists(backup)) else file_path
         target_regex = target_lang["regex"]
 
-        try:
-            with open(source_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            self.callbacks.on_log(f"❌ Ошибка чтения {file_path}: {exc}", "red")
-            return
+        with open(source_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
         # Ищем строки для перевода...
         strings_to_translate = {}
@@ -67,7 +64,5 @@ class BQProcessor:
         self.state.increment_translated(len(translated))
 
         # Сохраняем файл обратно
-        temp_path = file_path + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(temp_path, file_path)
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
+        atomic_write_text(file_path, payload)

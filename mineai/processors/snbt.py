@@ -4,6 +4,7 @@ import re
 
 from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
+from mineai.io_utils import atomic_write_text
 from mineai.processors.snbt_extract import apply_snbt_translations, extract_snbt_strings
 from mineai.runtime.state import JobState
 from mineai.text_processing import already_translated
@@ -59,12 +60,8 @@ class SnbtProcessor:
 
         target_regex = target_lang["regex"]
 
-        try:
-            with open(source_path, encoding="utf-8") as f:
-                content = f.read()
-        except OSError as exc:
-            self.callbacks.on_log(f"❌ Ошибка чтения {source_path}: {exc}", "red")
-            return
+        with open(source_path, encoding="utf-8") as f:
+            content = f.read()
             
         
 
@@ -100,7 +97,4 @@ class SnbtProcessor:
         new_content = apply_snbt_translations(content, mapping)
         
         # Шаг 3. Сохраняем в целевой файл (заменяя авторский ru_ru.snbt)
-        temp_path = target_file_path + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        os.replace(temp_path, target_file_path)
+        atomic_write_text(target_file_path, new_content)

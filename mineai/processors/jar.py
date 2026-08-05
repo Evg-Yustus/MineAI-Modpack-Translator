@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 import zipfile
 
 from mineai.constants import BOOK_PATH_MARKERS, MD_PATH_MARKERS, RESEARCH_PATH_MARKERS
@@ -58,7 +57,11 @@ class JarProcessor:
         try:
             with zipfile.ZipFile(jar_path, "r") as zin:
                 zout = (
-                    zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED)
+                    zipfile.ZipFile(
+                        temp_path,
+                        "w",
+                        compression=zipfile.ZIP_DEFLATED,
+                    )
                     if output_mode == "inplace"
                     else None
                 )
@@ -75,57 +78,107 @@ class JarProcessor:
                         if not self.state.should_run():
                             break
                         self.state.wait_if_paused()
+                        if not self.state.should_run():
+                            break
                         fl = item.filename.lower()
 
                         if output_mode == "inplace" and zout:
-                            if target_file not in fl and f"/{target_lang['file']}/" not in fl:
+                            if (
+                                target_file not in fl
+                                and f"/{target_lang['file']}/" not in fl
+                            ):
                                 zout.writestr(item, zin.read(item))
 
-                        is_book_json = fl.endswith(".json") and "/en_us/" in fl and (
-                            any(m in fl for m in BOOK_PATH_MARKERS) or any(m in fl for m in RESEARCH_PATH_MARKERS)
+                        is_book_json = (
+                            fl.endswith(".json")
+                            and "/en_us/" in fl
+                            and (
+                                any(m in fl for m in BOOK_PATH_MARKERS)
+                                or any(m in fl for m in RESEARCH_PATH_MARKERS)
+                            )
                         )
-                        is_book_md = (fl.endswith(".md") or fl.endswith(".txt")) and "/en_us/" in fl and any(
-                            m in fl for m in MD_PATH_MARKERS
+                        is_book_md = (
+                            (fl.endswith(".md") or fl.endswith(".txt"))
+                            and "/en_us/" in fl
+                            and any(m in fl for m in MD_PATH_MARKERS)
                         )
                         is_lang = fl.endswith("en_us.json") and not is_book_json
 
                         if translate_mods and is_lang:
                             modified |= self._process_lang_entry(
-                                zin, zout, item, locale_files, target_file, target_lang, mode,
-                                output_mode, pack_writer, mod_name, written_inplace,
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_file,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
+                                written_inplace,
                             )
                         elif translate_books and is_book_json:
                             modified |= self._process_book_json(
-                                zin, zout, item, locale_files, target_lang, mode,
-                                output_mode, pack_writer, mod_name, written_inplace,
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
+                                written_inplace,
                             )
                         elif translate_books and is_book_md:
                             modified |= self._process_book_md(
-                                zin, zout, item, locale_files, target_lang, mode,
-                                output_mode, pack_writer, mod_name, written_inplace,
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
+                                written_inplace,
                             )
 
                     if output_mode == "inplace" and zout:
                         for item in zin.infolist():
                             fl = item.filename.lower()
-                            if (target_file in fl or f"/{target_lang['file']}/" in fl) and item.filename not in written_inplace:
+                            is_target = (
+                                target_file in fl
+                                or f"/{target_lang['file']}/" in fl
+                            )
+                            if is_target and item.filename not in written_inplace:
                                 zout.writestr(item, zin.read(item))
                 finally:
                     if zout:
                         zout.close()
 
-            if output_mode == "inplace":
-                if modified and self.state.should_run():
-                    shutil.move(temp_path, jar_path)
-                elif os.path.exists(temp_path):
-                    os.remove(temp_path)
-            elif os.path.exists(temp_path):
-                os.remove(temp_path)
+            if output_mode == "inplace" and modified and self.state.should_run():
+                self._validate_inplace_archive(temp_path)
+                original_mode = os.stat(jar_path).st_mode
+                os.chmod(temp_path, original_mode)
+                os.replace(temp_path, jar_path)
 
-        except (OSError, zipfile.BadZipFile) as exc:
+        finally:
             if os.path.exists(temp_path):
-                os.remove(temp_path)
-            self.callbacks.on_log(f"❌ Ошибка в {mod_name}: {exc}", "red")
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _validate_inplace_archive(path: str) -> None:
+        with zipfile.ZipFile(path, "r") as archive:
+            bad_entry = archive.testzip()
+            if bad_entry is not None:
+                raise zipfile.BadZipFile(
+                    f"CRC check failed for {bad_entry} in {path}"
+                )
 
     def _process_lang_entry(
         self, zin, zout, item, locale_files, target_file, target_lang, mode,
