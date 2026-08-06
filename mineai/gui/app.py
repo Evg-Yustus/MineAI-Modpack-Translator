@@ -15,6 +15,7 @@ from mineai.constants import LANGUAGES, MC_VERSIONS
 from mineai.gui.settings import SettingsWindow
 from mineai.runtime.job import TranslationJob, TranslationOptions
 from mineai.runtime.state import JobState
+from mineai.gui.migration import MigrationWindow
 
 def _resolve_icon_path() -> str | None:
     """Ищет icon.ico: в ресурсах PyInstaller, рядом с EXE и в cwd."""
@@ -175,10 +176,15 @@ class TranslatorApp(ctk.CTk):
         ctk.CTkRadioButton(left, text="Пропуск (от 90%)", variable=self.var_mode, value="skip").pack(anchor="w", padx=20, pady=2)
         ctk.CTkRadioButton(left, text="С нуля (перезапись)", variable=self.var_mode, value="force").pack(anchor="w", padx=20, pady=2)
 
+        self.btn_migrate = ctk.CTkButton(
+            left, text="📦 Миграция ресурс-пака", fg_color="#17a2b8", hover_color="#138496", command=self._open_migration
+        )
+        self.btn_migrate.pack(pady=(20, 0), fill="x", padx=20)
+
         self.btn_analyze = ctk.CTkButton(
             left, text="Анализ сборки", fg_color="#0066cc", hover_color="#004c99", command=self._start_analysis
         )
-        self.btn_analyze.pack(pady=(20, 10), fill="x", padx=20)
+        self.btn_analyze.pack(pady=(10, 10), fill="x", padx=20)
         self.btn_start = ctk.CTkButton(
             left,
             text="▶ НАЧАТЬ ПЕРЕВОД",
@@ -497,6 +503,13 @@ class TranslatorApp(ctk.CTk):
             self.job_state.finish()
             self._job = None
             self._lock_ui(False)
+
+    def _open_migration(self) -> None:
+        if not settings.get("GENERAL", "mc_dir"):
+            messagebox.showerror("Ошибка", "Сначала выберите папку Minecraft!")
+            return
+        MigrationWindow(self, settings.get("GENERAL", "mc_dir"), self.var_lang.get(), self.cache_std, self.cache_ai, self.log)
+
 
 def run() -> None:
     if sys.platform == "win32":

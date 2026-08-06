@@ -40,7 +40,7 @@ class OpenRouterEngine(BatchLlmEngine):
                 lambda: requests.post(
                     self.api_url, headers=self._headers(),
                     json={"model": self.model, "messages": [{"role": "user", "content": prompt}],
-                          "temperature": 0.1, "max_tokens": max_tokens},
+                          "temperature": 0.1, "repetition_penalty": 1.0, "max_tokens": max_tokens},
                     timeout=300,
                 ),
                 operation="OpenRouter",

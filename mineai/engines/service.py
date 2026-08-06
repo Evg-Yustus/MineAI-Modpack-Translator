@@ -75,6 +75,7 @@ class TranslationService:
         result: dict[str, str] = {}
         pending: dict[str, EngineItem] = {}
         cached_count = 0
+        imported_count = 0  # Новый счетчик для ресурс-паков
         translated: dict[str, str] = {}
 
         def bump(n: int = 1) -> None:
@@ -110,10 +111,13 @@ class TranslationService:
             if smart_glue:
                 text = apply_smart_glue(text)
 
-            hit = self.cache.get(target_lang["api"], text)
+            hit, is_imported = self.cache.get(target_lang["api"], text)
             if hit is not None:
                 result[key] = hit
-                cached_count += 1
+                if is_imported:
+                    imported_count += 1
+                else:
+                    cached_count += 1
                 bump()
                 continue
             masked, mapping = mask_protected_fragments(text)
@@ -125,6 +129,8 @@ class TranslationService:
 
         if cached_count:
             callbacks.on_log(f"   🗃️ Из кэша: {cached_count} строк", "dim")
+        if imported_count:
+            callbacks.on_log(f"   📦 Из ресурс-паков: {imported_count} строк", "cyan")
 
         if not pending or not callbacks.should_run():
             return result

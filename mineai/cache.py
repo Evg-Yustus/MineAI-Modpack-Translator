@@ -10,15 +10,39 @@ from mineai.text_processing import polish_translation
 
 
 class TranslationCache:
-    """Thread-safe translation cache with optional auto-save."""
+    """Thread-safe translation cache with optional auto-save and modular imports."""
 
     def __init__(self, filepath: str) -> None:
         self.filepath = filepath
         self._data: dict[str, str] = {}
+        self._imported_data: dict[str, str] = {}  # Изолированный кэш для импорта
         self._lock = threading.RLock()
         self._dirty = False
         self._last_saved_count = 0
+        
+        self.load_imported_caches()
         self.polish_changes = self.load_and_polish()
+
+    def load_imported_caches(self) -> None:
+        with self._lock:
+            self._imported_data.clear()
+            cache_name = os.path.basename(self.filepath)
+            subfolder = "ai" if "ai" in cache_name else "std"
+            import_dir = os.path.join(os.getcwd(), "imported_caches", subfolder)
+            
+            if not os.path.exists(import_dir):
+                return
+                
+            for filename in os.listdir(import_dir):
+                if filename.endswith(".json"):
+                    path = os.path.join(import_dir, filename)
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            loaded = json.load(f)
+                            if self._is_valid_payload(loaded):
+                                self._imported_data.update(loaded)
+                    except (json.JSONDecodeError, OSError):
+                        pass
 
     def load_and_polish(self) -> int:
         changes = 0
@@ -45,8 +69,6 @@ class TranslationCache:
 
             for key, value in list(self._data.items()):
                 api_code, _, source = key.partition("_")
-                # Не сохраняем отравленные пары, где перевод равен исходнику
-                # для языка, отличного от английского.
                 if api_code != "en" and value == source:
                     del self._data[key]
                     changes += 1
@@ -64,10 +86,14 @@ class TranslationCache:
     def make_key(self, api_code: str, source_text: str) -> str:
         return f"{api_code}_{source_text}"
 
-    def get(self, api_code: str, source_text: str) -> str | None:
+    def get(self, api_code: str, source_text: str) -> tuple[str | None, bool]:
         key = self.make_key(api_code, source_text)
         with self._lock:
-            return self._data.get(key)
+            if key in self._data:
+                return self._data[key], False  # False = из обычного кэша
+            if key in self._imported_data:
+                return self._imported_data[key], True  # True = из импортированного архива
+            return None, False
 
     def set(self, api_code: str, source_text: str, translated: str) -> None:
         key = self.make_key(api_code, source_text)
