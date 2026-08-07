@@ -13,27 +13,36 @@ class JobSnapshot:
     current_file_done: int
     total_files: int
     start_time: float | None
+    ok_strings: int = 0
+    failed_strings: int = 0
+    cached_strings: int = 0
+    fallback_strings: int = 0
+    protected_strings: int = 0
 
 
 @dataclass
 class JobState:
     is_running: bool = False
     is_paused: bool = False
-
     total_strings: int = 0
     translated_strings: int = 0
-
     current_file_type: str = ""
     current_file_done: int = 0
     total_files: int = 0
-
     start_time: float | None = None
+    ok_strings: int = 0
+    failed_strings: int = 0
+    cached_strings: int = 0
+    fallback_strings: int = 0
+    protected_strings: int = 0
+
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _condition: threading.Condition = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._condition = threading.Condition(self._lock)
 
+    # ------------------------------------------------------------------
     def _reset_progress_unlocked(self) -> None:
         self.total_strings = 0
         self.translated_strings = 0
@@ -41,11 +50,17 @@ class JobState:
         self.current_file_done = 0
         self.total_files = 0
         self.start_time = None
+        self.ok_strings = 0
+        self.failed_strings = 0
+        self.cached_strings = 0
+        self.fallback_strings = 0
+        self.protected_strings = 0
 
     def reset_progress(self) -> None:
         with self._lock:
             self._reset_progress_unlocked()
 
+    # ------------------------------------------------------------------
     def start(self) -> None:
         with self._condition:
             self._reset_progress_unlocked()
@@ -95,6 +110,7 @@ class JobState:
     def stop(self) -> None:
         self.finish()
 
+    # ------------------------------------------------------------------
     def set_total_strings(self, total: int) -> None:
         with self._lock:
             self.total_strings = max(0, total)
@@ -106,10 +122,35 @@ class JobState:
             self.current_file_type = ""
             self.current_file_done = 0
             self.total_files = 0
+            self.ok_strings = 0
+            self.failed_strings = 0
+            self.cached_strings = 0
+            self.fallback_strings = 0
+            self.protected_strings = 0
 
     def increment_translated(self, count: int = 1) -> None:
         with self._lock:
             self.translated_strings += count
+
+    def mark_ok(self, count: int = 1) -> None:
+        with self._lock:
+            self.ok_strings += count
+
+    def mark_failed(self, count: int = 1) -> None:
+        with self._lock:
+            self.failed_strings += count
+
+    def mark_cached(self, count: int = 1) -> None:
+        with self._lock:
+            self.cached_strings += count
+
+    def mark_fallback(self, count: int = 1) -> None:
+        with self._lock:
+            self.fallback_strings += count
+
+    def mark_protected(self, count: int = 1) -> None:
+        with self._lock:
+            self.protected_strings += count
 
     def update_file_progress(self, file_type: str, done: int, total: int) -> None:
         with self._lock:
@@ -117,6 +158,7 @@ class JobState:
             self.current_file_done = done
             self.total_files = total
 
+    # ------------------------------------------------------------------
     def line_progress(self) -> float:
         snapshot = self.snapshot()
         if snapshot.total_strings <= 0:
@@ -134,25 +176,27 @@ class JobState:
                 current_file_done=self.current_file_done,
                 total_files=self.total_files,
                 start_time=self.start_time,
+                ok_strings=self.ok_strings,
+                failed_strings=self.failed_strings,
+                cached_strings=self.cached_strings,
+                fallback_strings=self.fallback_strings,
+                protected_strings=self.protected_strings,
             )
 
+    # ------------------------------------------------------------------
     @staticmethod
     def _eta_text(snapshot: JobSnapshot, now: float | None = None) -> str:
         if snapshot.translated_strings <= 0 or not snapshot.start_time:
             return "расчёт..."
-
         elapsed = (time.time() if now is None else now) - snapshot.start_time
         if elapsed < 5:
             return "расчёт..."
-
         remaining = snapshot.total_strings - snapshot.translated_strings
         if remaining <= 0:
             return "завершается..." if snapshot.is_running else "готово"
-
         rate = snapshot.translated_strings / elapsed
         if rate <= 0:
             return "расчёт..."
-
         seconds = remaining / rate
         if seconds < 60:
             return f"{int(seconds)} сек"
@@ -163,27 +207,29 @@ class JobState:
     def eta_text(self) -> str:
         return self._eta_text(self.snapshot())
 
+    # ------------------------------------------------------------------
     def get_full_status(self, engine_msg: str = "") -> str:
         snapshot = self.snapshot()
-
         file_info = ""
         if snapshot.total_files > 0:
             file_info = (
                 f"[{snapshot.current_file_type} "
                 f"{snapshot.current_file_done}/{snapshot.total_files}] "
             )
-
         string_info = ""
         if snapshot.total_strings > 0:
             display_translated = min(
-                snapshot.translated_strings,
-                snapshot.total_strings,
+                snapshot.translated_strings, snapshot.total_strings
             )
+            ok = min(snapshot.ok_strings, snapshot.total_strings)
+            failed = min(snapshot.failed_strings, snapshot.total_strings)
             string_info = (
-                f"Строки: {display_translated}/"
-                f"{snapshot.total_strings} | "
+                f"Переведено: {ok}/{snapshot.total_strings} | "
+                f"Обработано: {display_translated}/{snapshot.total_strings}"
             )
-
+            if failed:
+                string_info += f" | Ошибки: {failed}"
+            string_info += " | "
         engine_info = f"{engine_msg} | " if engine_msg else ""
         eta = f"Осталось: {self._eta_text(snapshot)}"
         return f"{file_info}{string_info}{engine_info}{eta}"

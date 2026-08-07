@@ -85,6 +85,30 @@ class TranslationJob:
             self.state.line_progress(),
         )
 
+    def _on_metric(self, name: str, count: int = 1) -> None:
+        if name == "ok":
+            self.state.mark_ok(count)
+        elif name == "failed":
+            self.state.mark_failed(count)
+        elif name == "cached":
+            self.state.mark_cached(count)
+        elif name == "fallback":
+            self.state.mark_fallback(count)
+        elif name == "protected":
+            self.state.mark_protected(count)
+
+    def _on_metric(self, name: str, count: int = 1) -> None:
+        if name == "ok":
+            self.state.mark_ok(count)
+        elif name == "failed":
+            self.state.mark_failed(count)
+        elif name == "cached":
+            self.state.mark_cached(count)
+        elif name == "fallback":
+            self.state.mark_fallback(count)
+        elif name == "protected":
+            self.state.mark_protected(count)
+
     def _callbacks(self) -> EngineCallbacks:
         return EngineCallbacks(
             should_run=self.state.should_run,
@@ -95,6 +119,7 @@ class TranslationJob:
                 None,
             ),
             on_progress=self._on_progress,
+            on_metric=self._on_metric,
         )
 
     def run_analysis(self, options: TranslationOptions) -> None:

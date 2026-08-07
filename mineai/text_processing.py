@@ -25,6 +25,7 @@ FORMAT_PATTERN = re.compile(
     r"\([a-z0-9_.-]+:[a-z0-9_./-]+\)|"
     r"\([A-Za-z0-9_./-]+\.md[#a-zA-Z0-9_-]*\)|"
     r"\n|"
+    r"\\+(?![\"])|"
     r"%[0-9.,]*\$?[a-zA-Z%]"
     r")",
     flags=re.IGNORECASE,
@@ -77,6 +78,7 @@ def polish_translation(text: str) -> str:
 
     # Добавляем пробел, если reset-код склеился со следующим словом ("уровня&rи" -> "уровня&r и")
     text = re.sub(r"(?<=[^\s&§])([&§]r)(?=[^\W_])", r"\1 ", text, flags=re.IGNORECASE)
+    text = re.sub(r"([&§][0-9a-fk-or])(?=[A-Za-zА-Яа-яЁё])", r"\1 ", text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s+(%\d*\$?[sd])\s+\]", r"[\1]", text)
     text = re.sub(r"\(\s+(%\d*\$?[sd])\s+\)", r"(\1)", text)
     text = re.sub(r'\"\s+(%\d*\$?[sd])\s+\"', r'"\1"', text)
@@ -88,6 +90,7 @@ def polish_translation(text: str) -> str:
     text = re.sub(r"\[\s+", "[", text)
     text = re.sub(r"\s+\]", "]", text)
     text = re.sub(r" {2,}", " ", text)
+    text = re.sub(r"([&§][0-9a-fk-or])(?=[A-Za-zА-Яа-яЁё])", r"\1 ", text, flags=re.IGNORECASE)
 
     for wrong, right in TERMINOLOGY_FIXES.items():
 

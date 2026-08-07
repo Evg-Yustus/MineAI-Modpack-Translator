@@ -291,11 +291,17 @@ class TranslatorApp(ctk.CTk):
         _inner.bind("<Key>", _fix_ctrl_copy, add="+")
         for tag, color in [
             ("green", "#2ecc71"),
+            ("lime", "#7bed9f"),
             ("yellow", "#f1c40f"),
-            ("red", "#e74c3c"),
+            ("gold", "#ffd700"),
+            ("orange", "#ff9f43"),
+            ("red", "#ff4d4d"),
+            ("pink", "#ff6b81"),
             ("cyan", "#00e5ff"),
+            ("blue", "#54a0ff"),
             ("magenta", "#b000ff"),
-            ("dim", "#888888"),
+            ("dim", "#7f8c8d"),
+            ("gray", "#b2bec3"),
             ("white", "#ffffff"),
         ]:
             self.textbox.tag_config(tag, foreground=color)

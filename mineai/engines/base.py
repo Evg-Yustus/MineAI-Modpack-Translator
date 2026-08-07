@@ -18,6 +18,8 @@ class EngineCallbacks:
     on_log: Callable[[str, str], None]  # message, color_tag
     on_status: Callable[[str], None]
     on_progress: Callable[[int], None] | None = None  # +N готовых строк
+    on_metric: Callable[[str, int], None] | None = None  # (имя метрики, +N)
+    on_metric: Callable[[str, int], None] | None = None  # (имя метрики, +N)
 
 
 class TranslationEngine(ABC):

@@ -1,6 +1,5 @@
 from collections import Counter
 import re
-
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
 from mineai.constants import DEFAULT_OPENROUTER_MODEL
@@ -16,12 +15,10 @@ from mineai.text_processing import (
     mask_protected_fragments,
 )
 
-
 _CJK_PATTERN = re.compile(
     r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
     r"\uac00-\ud7af]"
 )
-
 _PROMPT_LEAK_MARKERS = (
     "no markers",
     "marker whitelist",
@@ -31,23 +28,40 @@ _PROMPT_LEAK_MARKERS = (
 
 
 def _source_fingerprint(text: str) -> str:
-    """Normalize representation only, without changing text semantics."""
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _count_fragment(text: str, fragment: str) -> int:
+    """Считает вхождения фрагмента; буквенные фрагменты (II, III, RF...) —
+    с границами слова, чтобы 'II' не находился внутри 'III'."""
+    if re.fullmatch(r"[A-Za-z]{1,4}", fragment):
+        pattern = r"(?<![A-Za-z])" + re.escape(fragment) + r"(?![A-Za-z])"
+    else:
+        pattern = re.escape(fragment)
+    return len(re.findall(pattern, text))
+
+
 def _can_cache_identity(original: str) -> bool:
-    """Return whether an unchanged result is an intentional technical token."""
+    """True, если оставить оригинал без перевода — осознанное решение."""
     stripped = original.strip()
     if not stripped:
         return False
     if is_technical_term(stripped):
         return True
-    return bool(
-        re.fullmatch(
-            r"[A-Z0-9][A-Z0-9+./_:#-]{0,15}",
-            stripped,
-        )
-    )
+    if re.fullmatch(r"[A-Z0-9][A-Z0-9+./_:#-]{0,15}", stripped):
+        return True
+    # Структурный JSON (tellraw / click-события) — это код, а не текст
+    if stripped.startswith(("[{", "{")) and '"text"' in stripped:
+        return True
+    # Структурный JSON (click-события, tellraw) — это код, а не текст
+    if stripped.startswith(("{", "[{")) and '"text"' in stripped:
+        return True
+    # Имена собственные: 1-4 слов с заглавной буквы
+    if re.fullmatch(
+        r"[A-Z][A-Za-z0-9'&.-]*(?: [A-Z][A-Za-z0-9'&.-]*){0,3}", stripped
+    ):
+        return True
+    return False
 
 
 def _validate_candidate(
@@ -55,53 +69,39 @@ def _validate_candidate(
     candidate: object,
     target_lang: dict,
 ) -> tuple[bool, str | None, bool]:
-    """Return accepted, rejection reason, and intentional-identity flag."""
+    """Return (accepted, rejection reason, intentional-identity flag)."""
     if not isinstance(candidate, str):
         return False, "ответ не является строкой", False
-
     if not candidate.strip():
         return False, "получена пустая строка", False
-
     lowered = candidate.casefold()
     for marker in _PROMPT_LEAK_MARKERS:
         if marker in lowered:
-            return (
-                False,
-                f"в ответ попала служебная инструкция: {marker}",
-                False,
-            )
-
-    expected_fragments = Counter(item.mapping.values())
-    for fragment, expected_count in expected_fragments.items():
-        actual_count = candidate.count(fragment)
+            return False, f"эхо промпта: {marker}", False
+    for fragment, expected_count in Counter(item.mapping.values()).items():
+        actual_count = _count_fragment(candidate, fragment)
         if actual_count != expected_count:
             return (
                 False,
-                "изменён защищённый фрагмент "
-                f"{fragment!r}: ожидалось {expected_count}, "
-                f"получено {actual_count}",
+                f"изменён защищённый фрагмент {fragment!r}: "
+                f"ожидалось {expected_count}, получено {actual_count}",
                 False,
             )
-
-    expected_literals = Counter(PLACEHOLDER_PATTERN.findall(item.original))
-    actual_literals = Counter(PLACEHOLDER_PATTERN.findall(candidate))
-    if actual_literals != expected_literals:
-        return False, "изменены буквальные маркеры [#N#]", False
-
+    if Counter(PLACEHOLDER_PATTERN.findall(candidate)) != Counter(
+        PLACEHOLDER_PATTERN.findall(item.original)
+    ):
+        return False, "изменены маркеры [#N#]", False
     same_as_source = candidate.strip() == item.original.strip()
     if same_as_source:
         if target_lang["api"] == "en":
             return True, None, False
         if _can_cache_identity(item.original):
             return True, None, True
-        return False, "ответ совпадает с исходным текстом", False
-
+        return False, "ответ совпадает с оригиналом", False
     if not re.search(target_lang["regex"], candidate):
-        return False, "в ответе нет символов целевого языка", False
-
+        return False, "нет символов целевого языка", False
     if target_lang["api"] == "ru" and _CJK_PATTERN.search(candidate):
-        return False, "в русском переводе обнаружены CJK-символы", False
-
+        return False, "CJK-символы в русском переводе", False
     return True, None, False
 
 
@@ -128,15 +128,12 @@ class TranslationService:
         self.ai_provider = ai_provider
 
     def _build_engine(
-        self,
-        context: str = "",
-        prompt_type: str = "mods",
+        self, context: str = "", prompt_type: str = "mods"
     ) -> TranslationEngine:
         try:
             retries = self.config.getint("AI", "ai_retries")
         except Exception:
             retries = 3
-
         if self.engine_name == "google":
             return GoogleEngine(
                 workers=self.config.getint("GENERAL", "google_workers", 5),
@@ -164,6 +161,7 @@ class TranslationService:
             retries=retries,
         )
 
+    # ------------------------------------------------------------------
     def translate_dict(
         self,
         strings: dict[str, str],
@@ -191,49 +189,39 @@ class TranslationService:
             if callbacks.on_progress:
                 callbacks.on_progress(n)
 
+        def metric(name: str, n: int = 1) -> None:
+            if callbacks.on_metric:
+                callbacks.on_metric(name, n)
+
         def commit(owner_key: str, text: object, source_label: str) -> bool:
             item = pending[owner_key]
-            accepted_value, reason, identity = _validate_candidate(
-                item,
-                text,
-                target_lang,
-            )
-
-            if not accepted_value:
+            ok, reason, identity = _validate_candidate(item, text, target_lang)
+            if not ok:
                 failure_reasons[owner_key] = f"{source_label}: {reason}"
-                candidate_preview = repr(text)[:120] if text is not None else "None"
+                preview = repr(text)[:120] if text is not None else "None"
                 callbacks.on_log(
-                    "❌ Отклонён перевод "
-                    f"{item.original[:70]!r}: {reason}; "
-                    f"ответ={candidate_preview}",
+                    f"❌ Отклонён {item.original[:70]!r}: {reason}; "
+                    f"ответ={preview}",
                     "red",
                 )
                 return False
-
             assert isinstance(text, str)
             output_keys = aliases[owner_key]
-            for output_key in output_keys:
-                result[output_key] = text
+            for key in output_keys:
+                result[key] = text
             accepted.add(owner_key)
-
             if identity:
                 self.cache.set_identity(target_lang["api"], item.original)
-                callbacks.on_log(
-                    "   ↪ Оставлено без изменений и запомнено: "
-                    f"{item.original[:70]}",
-                    "dim",
-                )
+                metric("protected", len(output_keys))
             else:
                 self.cache.set(target_lang["api"], item.original, text)
-                duplicate_suffix = (
-                    f" ×{len(output_keys)}" if len(output_keys) > 1 else ""
-                )
-                callbacks.on_log(
-                    f" > {item.original[:40]} -> "
-                    f"{text[:40]}{duplicate_suffix}",
-                    "dim",
-                )
-
+                metric("ok", len(output_keys))
+                if "Google" in source_label:
+                    metric("fallback", len(output_keys))
+            dup = f" ×{len(output_keys)}" if len(output_keys) > 1 else ""
+            callbacks.on_log(
+                f" > {item.original[:40]} -> {text[:40]}{dup}", "dim"
+            )
             bump(len(output_keys))
             return True
 
@@ -244,42 +232,27 @@ class TranslationService:
         ) -> None:
             for key, text in engine_result.items():
                 if key not in requested or key not in pending:
-                    callbacks.on_log(
-                        f"⚠️ {source_label} вернул неизвестный ключ: {key}",
-                        "yellow",
-                    )
                     continue
                 commit(key, text, source_label)
-
             for key in requested:
                 if key not in engine_result and key not in accepted:
                     failure_reasons[key] = (
                         f"{source_label}: движок не вернул результата"
                     )
 
+        # --- Сбор pending + кэш + дедуп ---
         for key, text in strings.items():
             if not callbacks.should_run():
                 break
             callbacks.wait_if_paused()
-
             if smart_glue:
                 text = apply_smart_glue(text)
-
             masked, mapping = mask_protected_fragments(text)
-            item = EngineItem(
-                key=key,
-                original=text,
-                masked=masked,
-                mapping=mapping,
-            )
+            item = EngineItem(key=key, original=text, masked=masked, mapping=mapping)
 
             hit, is_imported = self.cache.get(target_lang["api"], text)
             if hit is not None:
-                valid, reason, _identity = _validate_candidate(
-                    item,
-                    hit,
-                    target_lang,
-                )
+                valid, reason, _id = _validate_candidate(item, hit, target_lang)
                 if valid:
                     result[key] = hit
                     if is_imported:
@@ -287,47 +260,36 @@ class TranslationService:
                     else:
                         cached_count += 1
                     bump()
+                    metric("ok")
+                    metric("cached")
                     continue
-
-                callbacks.on_log(
-                    "⚠️ Невалидная запись кэша отброшена "
-                    f"для {text[:70]!r}: {reason}",
-                    "yellow",
-                )
                 self.cache.discard(
-                    target_lang["api"],
-                    text,
-                    include_imported=is_imported,
+                    target_lang["api"], text, include_imported=is_imported
                 )
 
             if not masked:
                 result[key] = text
                 bump()
+                metric("protected")
                 continue
 
-            fingerprint = _source_fingerprint(text)
-            existing_owner = source_owner.get(fingerprint)
-            if existing_owner is not None:
-                aliases[existing_owner].append(key)
+            fp = _source_fingerprint(text)
+            owner = source_owner.get(fp)
+            if owner is not None:
+                aliases[owner].append(key)
                 deduplicated_count += 1
                 continue
-
-            source_owner[fingerprint] = key
+            source_owner[fp] = key
             aliases[key] = [key]
             pending[key] = item
 
         if cached_count:
-            callbacks.on_log(f"   🗃️ Из кэша: {cached_count} строк", "dim")
+            callbacks.on_log(f"   🗃️ Из кэша: {cached_count}", "gray")
         if imported_count:
-            callbacks.on_log(
-                f"   📦 Из ресурс-паков: {imported_count} строк",
-                "cyan",
-            )
+            callbacks.on_log(f"   📦 Из ресурс-паков: {imported_count}", "cyan")
         if deduplicated_count:
             callbacks.on_log(
-                "   ♻️ Повторяющиеся строки объединены: "
-                f"{deduplicated_count}",
-                "dim",
+                f"   ♻️ Дедупликация: {deduplicated_count}", "dim"
             )
 
         if not pending or not callbacks.should_run():
@@ -336,68 +298,48 @@ class TranslationService:
         engine = self._build_engine(context, prompt_type)
         is_ai = self.engine_name not in ("google", "deepl")
         max_chars = self.ai_batch * 100 if is_ai else 999999
-        max_placeholders_per_batch = 30
+        max_ph_per_batch = 20
 
         batches: list[dict[str, EngineItem]] = []
-        current_batch: dict[str, EngineItem] = {}
-        current_chars = 0
-        current_placeholders = 0
-
+        cur: dict[str, EngineItem] = {}
+        cur_chars = 0
+        cur_ph = 0
         for key, item in pending.items():
-            text_len = len(item.masked)
-            placeholder_count = len(PLACEHOLDER_PATTERN.findall(item.masked))
-
-            if is_ai and (placeholder_count > 15 or text_len > 800):
-                if current_batch:
-                    batches.append(current_batch)
-                    current_batch = {}
-                    current_chars = 0
-                    current_placeholders = 0
+            tlen = len(item.masked)
+            ph = len(PLACEHOLDER_PATTERN.findall(item.masked))
+            if is_ai and (ph > 15 or tlen > 800):
+                if cur:
+                    batches.append(cur)
+                    cur, cur_chars, cur_ph = {}, 0, 0
                 batches.append({key: item})
                 continue
-
-            if is_ai and current_batch and (
-                (current_chars + text_len) > max_chars
-                or (current_placeholders + placeholder_count)
-                > max_placeholders_per_batch
+            if is_ai and cur and (
+                cur_chars + tlen > max_chars or cur_ph + ph > max_ph_per_batch
             ):
-                batches.append(current_batch)
-                current_batch = {}
-                current_chars = 0
-                current_placeholders = 0
+                batches.append(cur)
+                cur, cur_chars, cur_ph = {}, 0, 0
+            cur[key] = item
+            cur_chars += tlen
+            cur_ph += ph
+            if (not is_ai and len(cur) >= 50) or (is_ai and len(cur) >= self.ai_batch):
+                batches.append(cur)
+                cur, cur_chars, cur_ph = {}, 0, 0
+        if cur:
+            batches.append(cur)
 
-            current_batch[key] = item
-            current_chars += text_len
-            current_placeholders += placeholder_count
-
-            if (
-                (not is_ai and len(current_batch) >= 50)
-                or (is_ai and len(current_batch) >= self.ai_batch)
-            ):
-                batches.append(current_batch)
-                current_batch = {}
-                current_chars = 0
-                current_placeholders = 0
-
-        if current_batch:
-            batches.append(current_batch)
-
-        for index, batch in enumerate(batches):
+        for idx, batch in enumerate(batches):
             if not callbacks.should_run():
                 break
             if len(batches) > 1:
                 callbacks.on_log(
-                    f"📦 Отправка пачки {index + 1}/{len(batches)} "
-                    f"({len(batch)} строк)...",
-                    "dim",
+                    f"📦 Пачка {idx+1}/{len(batches)} ({len(batch)} строк)",
+                    "blue",
                 )
             batch_result = engine.translate_batch(batch, target_lang, callbacks)
             apply_engine_result(batch, batch_result, "основной движок")
 
-        failed_pending = {
-            key: item for key, item in pending.items() if key not in accepted
-        }
-
+        # --- Fallback ---
+        failed_pending = {k: v for k, v in pending.items() if k not in accepted}
         try:
             use_fallback = self.config.getboolean("AI", "fallback_google")
         except Exception:
@@ -405,87 +347,56 @@ class TranslationService:
 
         if failed_pending and is_ai and use_fallback and callbacks.should_run():
             callbacks.on_log(
-                f"🔄 ИИ не справился. Переводим {len(failed_pending)} "
-                "строк через Google...",
-                "cyan",
+                f"🔄 Fallback: {len(failed_pending)} строк → Google", "cyan"
             )
-            google_engine = GoogleEngine(
+            ge = GoogleEngine(
                 workers=self.config.getint("GENERAL", "google_workers", 5),
                 mode=self.google_mode,
             )
-            google_translated = google_engine.translate_batch(
-                failed_pending,
-                target_lang,
-                callbacks,
-            )
-            apply_engine_result(
-                failed_pending,
-                google_translated,
-                "Google fallback",
-            )
-            accepted_by_google = sum(
-                1 for key in failed_pending if key in accepted
-            )
-            if accepted_by_google:
+            gt = ge.translate_batch(failed_pending, target_lang, callbacks)
+            apply_engine_result(failed_pending, gt, "Google fallback")
+            got = sum(1 for k in failed_pending if k in accepted)
+            if got:
+                callbacks.on_log(f"   ✅ Google: {got}/{len(failed_pending)}", "green")
+            if got < len(failed_pending):
                 callbacks.on_log(
-                    f"   ✅ Google fallback: принято "
-                    f"{accepted_by_google}/{len(failed_pending)} строк",
-                    "green",
-                )
-            if accepted_by_google < len(failed_pending):
-                callbacks.on_log(
-                    f"   ⚠️ Google fallback: не принято "
-                    f"{len(failed_pending) - accepted_by_google} строк",
+                    f"   ⚠️ Google: не принято {len(failed_pending)-got}",
                     "yellow",
                 )
 
+        # Complex fallback (gated by use_fallback)
         if is_ai and use_fallback and callbacks.should_run():
-            still_failed_complex = {
-                key: item
-                for key, item in pending.items()
-                if key not in accepted
-                and len(PLACEHOLDER_PATTERN.findall(item.masked)) > 10
+            complex_failed = {
+                k: v
+                for k, v in pending.items()
+                if k not in accepted
+                and len(PLACEHOLDER_PATTERN.findall(v.masked)) > 10
             }
-            if still_failed_complex:
+            if complex_failed:
                 callbacks.on_log(
-                    f"🔀 {len(still_failed_complex)} сложных строк "
-                    "(маркеры) → Google Translate",
-                    "cyan",
+                    f"🔀 {len(complex_failed)} сложных → Google", "cyan"
                 )
-                google_fallback = GoogleEngine(
+                gf = GoogleEngine(
                     workers=self.config.getint("GENERAL", "google_workers", 5),
                     mode="single",
                 )
-                google_result = google_fallback.translate_batch(
-                    still_failed_complex,
-                    target_lang,
-                    callbacks,
-                )
-                apply_engine_result(
-                    still_failed_complex,
-                    google_result,
-                    "Google complex fallback",
-                )
+                gr = gf.translate_batch(complex_failed, target_lang, callbacks)
+                apply_engine_result(complex_failed, gr, "Google complex fallback")
 
+        # --- Failed originals ---
         for owner_key, item in pending.items():
             if owner_key in accepted:
                 continue
-
             output_keys = aliases[owner_key]
-            reason = failure_reasons.get(
-                owner_key,
-                "движок не вернул валидного результата",
-            )
+            reason = failure_reasons.get(owner_key, "нет результата")
             callbacks.on_log(
-                "⚠️ Строка не переведена: "
-                f"{item.original[:90]!r}; "
-                f"причина: {reason}; "
-                "сохранён исходный текст",
+                f"⚠️ Не переведено: {item.original[:90]!r}; {reason}",
                 "yellow",
             )
-            for output_key in output_keys:
-                result[output_key] = item.original
+            for k in output_keys:
+                result[k] = item.original
             bump(len(output_keys))
+            metric("failed", len(output_keys))
 
         self.cache.save_if_threshold()
         return result

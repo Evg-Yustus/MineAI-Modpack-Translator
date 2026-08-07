@@ -24,7 +24,7 @@ def get_default_prompts() -> dict[str, str]:
         "mods": "Translate the following JSON string values from English to {lang_name}.",
         "books": "Ты локализатор Minecraft. Переведи текст книги/справочника на {lang_name}. Сохраняй игровой лор и литературный стиль.",
         "quests": "Ты локализатор Minecraft. Переведи строки мода/квеста «{context}» на {lang_name}. Сохраняй игровой стиль и лор.",
-        "technical": "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve every [#N#] placeholder exactly (e.g. [#0#], [#1#]). Do not add, remove, duplicate, or rename them.\n3. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside the JSON strings.\n4. Output ONLY raw valid JSON. No markdown formatting, no ```json tags, no explanations, no introductory text."
+        "technical": "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly. If a word is wrapped like [#0#]Word[#1#], wrap the translation like [#0#]Слово[#1#]. DO NOT drop any markers.\n3. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside the JSON strings.\n4. Output ONLY raw valid JSON. No markdown formatting, no explanations, no intro text."
     }
 
 def load_prompts() -> dict[str, str]:
@@ -91,24 +91,84 @@ def parse_llm_json_response(content: str) -> dict[str, object]:
         flags=re.IGNORECASE | re.MULTILINE,
     ).strip()
 
+    # Ищем первый валидный JSON-объект (защита от Extra data и приписок ИИ)
+    start_idx = text.find('{')
+    if start_idx != -1:
+        stack = 0
+        for i in range(start_idx, len(text)):
+            if text[i] == '{':
+                stack += 1
+            elif text[i] == '}':
+                stack -= 1
+                if stack == 0:
+                    text = text[start_idx:i+1]
+                    break
+
     # Чиним литеральные newlines внутри JSON-строк:
-    # Заменяем реальный \n между кавычками на экранированный \\n
+    # заменяем реальный \n между кавычками на экранированный \\n
     def _fix_newlines_in_strings(m: re.Match) -> str:
         return m.group(0).replace("\n", "\\n").replace("\r", "\\r")
 
     text = re.sub(r'"(?:[^"\\]|\\.)*"', _fix_newlines_in_strings, text)
+    text = re.sub(r'\\(["\\/bfnrtu]|u[0-9a-fA-F]{4})|\\', lambda m: m.group(0) if m.group(1) else r"\\\\", text)  # v9: санация \-эскейпов
+
+    # Санация невалидных \-эскейпов (\К, \П и т.п.): удваиваем "одинокий" слэш,
+    # не трогая валидные эскейпы (\", \\, \n, \uXXXX и т.д.)
+    text = re.sub(
+        r'\\(["\\/bfnrtu]|u[0-9a-fA-F]{4})|\\',
+        lambda m: m.group(0) if m.group(1) else r"\\\\",
+        text,
+    )
 
     data = json.loads(text)
     if not isinstance(data, dict):
         raise TypeError("LLM response is not a JSON object")
     return data
 
-
 def placeholders_match(text: str, expected_text: str) -> bool:
     """Return whether all placeholders are preserved with equal multiplicity."""
     expected_ids = Counter(PLACEHOLDER_PATTERN.findall(expected_text))
     actual_ids = Counter(PLACEHOLDER_PATTERN.findall(text))
     return actual_ids == expected_ids
+
+
+def repair_markers(
+    call_api: Callable[[str, int], str | None],
+    masked_source: str,
+    broken_translation: str,
+    max_tokens: int,
+) -> str | None:
+    """Просит модель восстановить маркеры [#N#] в готовом переводе.
+
+    Дешёвый второй шанс: перевод уже хороший, но модель потеряла/сдвинула
+    маркеры. Возвращает исправленный текст или None.
+    """
+    prompt = (
+        "The translation below lost or corrupted some [#N#] markers.\n"
+        "Restore the markers so the translation contains EXACTLY the same\n"
+        "markers as the source (same ids, same counts). Do not retranslate.\n"
+        "Output ONLY the corrected text, no explanations.\n\n"
+        f"SOURCE:\n{masked_source}\n\n"
+        f"BROKEN TRANSLATION:\n{broken_translation}\n"
+    )
+    content = call_api(prompt, max_tokens)
+    if not content:
+        return None
+    raw = re.sub(
+        r"^```[a-z]*\s*|\s*```$",
+        "",
+        content.strip(),
+        flags=re.IGNORECASE | re.MULTILINE,
+    ).strip()
+    if raw.startswith("{") and raw.endswith("}"):
+        try:
+            json.loads(raw)
+            return None
+        except (json.JSONDecodeError, ValueError):
+            pass
+    if raw and placeholders_match(raw, masked_source):
+        return raw
+    return None
 
 def build_marker_manifest(payload: dict[str, str]) -> str:
     """Явный чек-лист маркеров для каждого ключа запроса.
@@ -241,7 +301,7 @@ class BatchLlmEngine(TranslationEngine):
                 callbacks.on_log(
                     f"🔁 {self.label}: повтор {retry_number}/"
                     f"{len(RETRY_BATCH_SIZES)} — {len(failed)} строк",
-                    "yellow",
+                    "orange",
                 )
                 retry_failed: list[str] = []
                 for j in range(0, len(failed), retry_batch_size):
@@ -283,8 +343,7 @@ class BatchLlmEngine(TranslationEngine):
         callbacks: EngineCallbacks,
     ) -> list[str]:
         PLACEHOLDER_THRESHOLD = 20
-        CHUNK_SIZE = 10
-
+        CHUNK_SIZE = 6
         # Разделяем ключи на обычные и сложные
         normal_keys = []
         complex_keys = []
@@ -306,7 +365,7 @@ class BatchLlmEngine(TranslationEngine):
 
             callbacks.on_log(
                 f"🧩 {self.label}: строка с {ph_total} маркерами → {len(sub_chunks)} чанков",
-                "dim",
+                "blue",
             )
 
             success = True
@@ -320,11 +379,12 @@ class BatchLlmEngine(TranslationEngine):
                 # Для чанков НЕ используем JSON — модель отвечает чистым текстом
                 chunk_manifest = build_marker_manifest({"TEXT": sub_text})
                 sub_prompt = (
-                    f"Translate this Minecraft quest text to {target_lang['name']}. "
-                    f"Do not change or remove backslashes. "
-                    f"Output ONLY the translated text, no explanations.\n\n"
+                    f"Translate the following text into {target_lang['name']}.\n"
+                    f"RULES:\n"
+                    f"1. Output ONLY the translated text, no explanations.\n"
+                    f"2. You MUST preserve ALL [#N#] placeholders exactly as they appear in the original text.\n\n"
                     f"{chunk_manifest}\n\n"
-                    f"TEXT:\n{sub_text}"
+                    f"TEXT TO TRANSLATE:\n{sub_text}"
                 )
 
                 chunk_ok = False
@@ -343,7 +403,16 @@ class BatchLlmEngine(TranslationEngine):
                         if raw and placeholders_match(raw, sub_text):
                             translated_parts.append(raw)
                             chunk_ok = True
+                            callbacks.on_log(f"   ✔️ Чанк {sub_idx}/{len(sub_chunks)} переведен", "green")
                             break
+                        if raw:
+                            fixed = repair_markers(
+                                self._call_api, sub_text, raw, self.max_tokens
+                            )
+                            if fixed is not None:
+                                translated_parts.append(fixed)
+                                chunk_ok = True
+                                break
                     except requests.RequestException:
                         continue
 
@@ -402,9 +471,14 @@ class BatchLlmEngine(TranslationEngine):
                         dump_ai_error(items[key].masked, raw, f"Слишком длинный текст ({len(raw)} при оригинале {orig_len})")
                         continue
                     if not placeholders_match(raw, items[key].masked):
-                        all_failed.append(key)
-                        dump_ai_error(items[key].masked, raw, "Потеряны/добавлены маркеры [#N#]")
-                        continue
+                        fixed = repair_markers(
+                            self._call_api, items[key].masked, raw, self.max_tokens
+                        )
+                        if fixed is None:
+                            all_failed.append(key)
+                            dump_ai_error(items[key].masked, raw, "Потеряны/добавлены маркеры [#N#]")
+                            continue
+                        raw = fixed
                     text = unmask_translation(raw, items[key].mapping)
                     result[key] = polish_translation(text)
                 if len(all_failed) > len(complex_keys):

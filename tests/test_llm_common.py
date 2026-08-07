@@ -121,8 +121,15 @@ class BatchLlmEngineTests(unittest.TestCase):
 
     def test_retries_only_the_value_with_a_lost_placeholder(self) -> None:
         calls: list[dict[str, str]] = []
+        repair_calls: list[str] = []
 
         def call_api(prompt: str, _max_tokens: int) -> str:
+            if "BROKEN TRANSLATION:" in prompt:
+                repair_calls.append(prompt)
+                # Модель снова вернула JSON вместо текста — гвард обязан отклонить.
+                return json.dumps(
+                    {"power": "Требуется [#0#] RF/t"}, ensure_ascii=False
+                )
             payload = prompt_payload(prompt)
             calls.append(payload)
             if len(calls) == 1:
@@ -145,12 +152,29 @@ class BatchLlmEngineTests(unittest.TestCase):
             ),
             "title": EngineItem("title", "Generator", "Generator"),
         }
-
         result = engine.translate_batch(items, TARGET_LANG, callbacks())
-
         self.assertEqual(result["power"], "Требуется %s RF/t")
         self.assertEqual(result["title"], "Генератор")
+        self.assertEqual(len(repair_calls), 1)
         self.assertEqual(set(calls[1]), {"power"})
+
+    def test_marker_repair_rescues_a_good_translation(self) -> None:
+        def call_api(prompt: str, _max_tokens: int) -> str:
+            if "BROKEN TRANSLATION:" in prompt:
+                return "Требуется [#0#] RF/t"
+            return json.dumps({"power": "Требуется энергия"}, ensure_ascii=False)
+
+        engine = BatchLlmEngine(call_api=call_api)
+        items = {
+            "power": EngineItem(
+                "power",
+                "Requires %s RF/t",
+                "Requires [#0#] RF/t",
+                {"[#0#]": "%s"},
+            ),
+        }
+        result = engine.translate_batch(items, TARGET_LANG, callbacks())
+        self.assertEqual(result["power"], "Требуется %s RF/t")
 
     def test_rejects_all_non_string_json_values(self) -> None:
         invalid_values = [None, 42, True, ["Перевод"], {"text": "Перевод"}]

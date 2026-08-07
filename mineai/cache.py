@@ -3,24 +3,21 @@ import os
 import shutil
 import threading
 import unicodedata
-from typing import Callable
-
 from mineai.constants import CACHE_FILE_AI, CACHE_FILE_STD
 from mineai.io_utils import atomic_write_text
 from mineai.text_processing import polish_translation
-
 
 _IDENTITY_PREFIX = "__mineai_identity__:"
 
 
 def _normalize_cache_source(text: str) -> str:
-    """Normalize representation without changing case or inner whitespace."""
+    """Normalize line-endings and Unicode without changing semantics."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     return unicodedata.normalize("NFC", text)
 
 
 class TranslationCache:
-    """Thread-safe translation cache with optional auto-save and modular imports."""
+    """Thread-safe translation cache with identity support."""
 
     def __init__(self, filepath: str) -> None:
         self.filepath = filepath
@@ -29,31 +26,30 @@ class TranslationCache:
         self._lock = threading.RLock()
         self._dirty = False
         self._last_saved_count = 0
-
         self.load_imported_caches()
         self.polish_changes = self.load_and_polish()
 
+    # ------------------------------------------------------------------
     def load_imported_caches(self) -> None:
         with self._lock:
             self._imported_data.clear()
             cache_name = os.path.basename(self.filepath)
             subfolder = "ai" if "ai" in cache_name else "std"
             import_dir = os.path.join(os.getcwd(), "imported_caches", subfolder)
-
             if not os.path.exists(import_dir):
                 return
-
             for filename in os.listdir(import_dir):
                 if filename.endswith(".json"):
                     path = os.path.join(import_dir, filename)
                     try:
                         with open(path, "r", encoding="utf-8") as f:
                             loaded = json.load(f)
-                            if self._is_valid_payload(loaded):
-                                self._imported_data.update(loaded)
+                        if self._is_valid_payload(loaded):
+                            self._imported_data.update(loaded)
                     except (json.JSONDecodeError, OSError):
                         pass
 
+    # ------------------------------------------------------------------
     def load_and_polish(self) -> int:
         changes = 0
         with self._lock:
@@ -80,18 +76,15 @@ class TranslationCache:
             for key, value in list(self._data.items()):
                 if key.startswith(_IDENTITY_PREFIX):
                     continue
-
-                api_code, separator, source = key.partition("_")
-                if not separator:
+                api_code, sep, source = key.partition("_")
+                if not sep:
                     del self._data[key]
                     changes += 1
                     continue
-
                 if api_code != "en" and value == source:
                     del self._data[key]
                     changes += 1
                     continue
-
                 polished = polish_translation(value)
                 if polished != value:
                     self._data[key] = polished
@@ -101,59 +94,46 @@ class TranslationCache:
                 self._flush_unlocked()
         return changes
 
+    # ------------------------------------------------------------------
     def make_key(self, api_code: str, source_text: str) -> str:
-        normalized = _normalize_cache_source(source_text)
-        return f"{api_code}_{normalized}"
+        return f"{api_code}_{_normalize_cache_source(source_text)}"
 
     def make_identity_key(self, api_code: str, source_text: str) -> str:
         return _IDENTITY_PREFIX + self.make_key(api_code, source_text)
 
-    def get(
-        self,
-        api_code: str,
-        source_text: str,
-    ) -> tuple[str | None, bool]:
-        canonical_key = self.make_key(api_code, source_text)
-        legacy_key = f"{api_code}_{source_text}"
-        keys = tuple(dict.fromkeys((canonical_key, legacy_key)))
-        identity_key = self.make_identity_key(api_code, source_text)
-
+    def get(self, api_code: str, source_text: str) -> tuple[str | None, bool]:
+        canonical = self.make_key(api_code, source_text)
+        legacy = f"{api_code}_{source_text}"
+        identity = self.make_identity_key(api_code, source_text)
         with self._lock:
-            for key in keys:
+            for key in dict.fromkeys((canonical, legacy)):
                 if key in self._data:
                     return self._data[key], False
-
-            for key in keys:
                 if key in self._imported_data:
                     return self._imported_data[key], True
-
-            if identity_key in self._data:
+            if identity in self._data:
                 return source_text, False
-
             return None, False
 
     def set(self, api_code: str, source_text: str, translated: str) -> None:
-        canonical_key = self.make_key(api_code, source_text)
-        legacy_key = f"{api_code}_{source_text}"
-        identity_key = self.make_identity_key(api_code, source_text)
-
+        canonical = self.make_key(api_code, source_text)
+        legacy = f"{api_code}_{source_text}"
+        identity = self.make_identity_key(api_code, source_text)
         with self._lock:
-            self._data.pop(identity_key, None)
-            if legacy_key != canonical_key:
-                self._data.pop(legacy_key, None)
-            self._data[canonical_key] = translated
+            self._data.pop(identity, None)
+            if legacy != canonical:
+                self._data.pop(legacy, None)
+            self._data[canonical] = translated
             self._dirty = True
 
     def set_identity(self, api_code: str, source_text: str) -> None:
-        """Remember an intentionally unchanged technical token."""
-        canonical_key = self.make_key(api_code, source_text)
-        legacy_key = f"{api_code}_{source_text}"
-        identity_key = self.make_identity_key(api_code, source_text)
-
+        canonical = self.make_key(api_code, source_text)
+        legacy = f"{api_code}_{source_text}"
+        identity = self.make_identity_key(api_code, source_text)
         with self._lock:
-            self._data.pop(canonical_key, None)
-            self._data.pop(legacy_key, None)
-            self._data[identity_key] = "1"
+            self._data.pop(canonical, None)
+            self._data.pop(legacy, None)
+            self._data[identity] = "1"
             self._dirty = True
 
     def discard(
@@ -163,24 +143,22 @@ class TranslationCache:
         *,
         include_imported: bool = False,
     ) -> None:
-        canonical_key = self.make_key(api_code, source_text)
-        legacy_key = f"{api_code}_{source_text}"
-        identity_key = self.make_identity_key(api_code, source_text)
-
+        canonical = self.make_key(api_code, source_text)
+        legacy = f"{api_code}_{source_text}"
+        identity = self.make_identity_key(api_code, source_text)
         with self._lock:
-            local_removed = False
-            for key in dict.fromkeys((canonical_key, legacy_key, identity_key)):
+            removed = False
+            for key in dict.fromkeys((canonical, legacy, identity)):
                 if key in self._data:
                     del self._data[key]
-                    local_removed = True
-
+                    removed = True
             if include_imported:
-                self._imported_data.pop(canonical_key, None)
-                self._imported_data.pop(legacy_key, None)
-
-            if local_removed:
+                self._imported_data.pop(canonical, None)
+                self._imported_data.pop(legacy, None)
+            if removed:
                 self._dirty = True
 
+    # ------------------------------------------------------------------
     def __len__(self) -> int:
         with self._lock:
             return len(self._data)
@@ -205,8 +183,8 @@ class TranslationCache:
     @staticmethod
     def _is_valid_payload(payload: object) -> bool:
         return isinstance(payload, dict) and all(
-            isinstance(key, str) and isinstance(value, str)
-            for key, value in payload.items()
+            isinstance(k, str) and isinstance(v, str)
+            for k, v in payload.items()
         )
 
     def _backup_corrupt_file(self) -> None:

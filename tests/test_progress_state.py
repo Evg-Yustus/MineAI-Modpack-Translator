@@ -76,8 +76,10 @@ class JobStateProgressTests(unittest.TestCase):
         )
 
         self.assertEqual(state.line_progress(), 1.0)
-        self.assertIn("Строки: 5/5", state.get_full_status())
-        self.assertNotIn("Строки: 8/5", state.get_full_status())
+        status = state.get_full_status()
+        self.assertIn("Обработано: 5/5", status)
+        self.assertIn("Переведено: 0/5", status)
+        self.assertNotIn("8/5", status)
 
     def test_eta_reports_finishing_while_job_is_still_running(self):
         snapshot = JobSnapshot(
