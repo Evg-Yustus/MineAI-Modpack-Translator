@@ -61,7 +61,7 @@ class QtUxHardeningTests(unittest.TestCase):
         dark = theme_qss("Dark")
         light = theme_qss("Light")
         self.assertIn("#12131C", dark)
-        self.assertIn("#F5F6FA", light)
+        self.assertIn("#EEF1F5", light)
         self.assertIn("QToolButton#HelpMarker", dark)
         self.assertIn("QPlainTextEdit#LogView", light)
 

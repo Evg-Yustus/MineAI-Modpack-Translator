@@ -4,7 +4,35 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QSizePolicy, QToolButton, QToolTip, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QProgressBar, QSizePolicy, QSpinBox, QToolButton, QToolTip, QVBoxLayout, QWidget
+
+
+class ScrollSafeComboBox(QComboBox):
+    """ComboBox that never changes selection from an accidental wheel scroll."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(self.palette().text().color())
+        painter.drawText(
+            self.width() - 27,
+            0,
+            18,
+            self.height(),
+            int(Qt.AlignmentFlag.AlignCenter),
+            "⌄",
+        )
+
+
+class ScrollSafeSpinBox(QSpinBox):
+    """SpinBox that leaves the mouse wheel to the containing settings panel."""
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
 
 
 class ElidedLabel(QLabel):

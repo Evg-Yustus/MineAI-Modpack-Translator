@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from mineai.gui_qt.view_model import dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
+from mineai.gui_qt.view_model import compact_runtime_status, dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
 
 
 class _Config:
@@ -59,6 +59,19 @@ class DashboardStatsTests(unittest.TestCase):
         self.assertEqual(format_duration(9), "00:09")
         self.assertEqual(format_duration(125), "02:05")
         self.assertEqual(format_duration(3661), "01:01:01")
+
+
+class RuntimeStatusPresentationTests(unittest.TestCase):
+    def test_generated_dashboard_metrics_are_removed_from_task_status(self):
+        text = (
+            "[Моды 4/513] Переведено: 1169/123755 | "
+            "Обработано: 1173/123755 | Ошибки: 4 | "
+            "KoboldCPP: пакет 15 | Осталось: 2 ч 13 мин"
+        )
+        self.assertEqual(compact_runtime_status(text), "KoboldCPP: пакет 15")
+
+    def test_ordinary_status_is_preserved(self):
+        self.assertEqual(compact_runtime_status("Остановлено"), "Остановлено")
 
 
 class EngineReadinessTests(unittest.TestCase):

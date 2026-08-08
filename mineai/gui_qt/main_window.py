@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import threading
+import time
 import traceback
 
 from PyQt6.QtCore import QTimer, Qt, QUrl
@@ -31,6 +32,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QScrollArea,
     QSpinBox,
+    QStyle,
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
@@ -48,8 +50,8 @@ from mineai.gui_qt.i18n import t, translator
 from mineai.gui_qt.i18n_runtime import tr as rt
 from mineai.gui_qt.log_model import LogEntry, LogSegment, entry_from_message, matches_entry, split_translation_message
 from mineai.gui_qt.theme import theme_qss
-from mineai.gui_qt.view_model import ENGINE_OPTIONS, dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
-from mineai.gui_qt.widgets import Card, ElidedLabel, HelpMarker, LabeledValue, SegmentedProgressBar, StatCard, StatusPill
+from mineai.gui_qt.view_model import ENGINE_OPTIONS, compact_runtime_status, dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
+from mineai.gui_qt.widgets import Card, ElidedLabel, HelpMarker, LabeledValue, ScrollSafeComboBox, ScrollSafeSpinBox, SegmentedProgressBar, StatCard, StatusPill
 
 
 def _resolve_icon_path() -> str | None:
@@ -106,6 +108,7 @@ class TranslatorQtWindow(QMainWindow):
         self._worker: threading.Thread | None = None
         self._closing = False
         self._allow_close = False
+        self._runtime_ended_at: float | None = None
         self._log_entries: list[LogEntry] = []
         self._log_file = None
         try:
@@ -142,6 +145,7 @@ class TranslatorQtWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget()
+        root.setObjectName("AppRoot")
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -219,13 +223,13 @@ class TranslatorQtWindow(QMainWindow):
         layout.addWidget(self.migration_button)
 
         layout.addSpacing(4)
-        self.interface_language = QComboBox()
+        self.interface_language = ScrollSafeComboBox()
         self.interface_language.setObjectName("HeaderLanguageCombo")
         self.interface_language.addItem("RU", "ru")
         self.interface_language.addItem("EN", "en")
         language_index = self.interface_language.findData(self._ui_language)
         self.interface_language.setCurrentIndex(language_index if language_index >= 0 else 0)
-        self.interface_language.setFixedWidth(72)
+        self.interface_language.setFixedWidth(58)
         self.interface_language.setToolTip(t("header.language_tooltip"))
         self.interface_language.currentIndexChanged.connect(self._change_interface_language)
         layout.addWidget(self.interface_language)
@@ -245,7 +249,7 @@ class TranslatorQtWindow(QMainWindow):
         host.setFixedWidth(430)
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(10)
+        host_layout.setSpacing(0)
 
         scroll = QScrollArea()
         scroll.setObjectName("Sidebar")
@@ -253,6 +257,8 @@ class TranslatorQtWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         content = QWidget()
+        content.setObjectName("SidebarContent")
+        scroll.viewport().setObjectName("SidebarViewport")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 4, 0)
         layout.setSpacing(10)
@@ -279,8 +285,10 @@ class TranslatorQtWindow(QMainWindow):
         folder_row.setSpacing(6)
         self.folder_edit = QLineEdit()
         self.folder_edit.setReadOnly(True)
-        self.folder_button = QPushButton("📁")
-        self.folder_button.setFixedWidth(42)
+        self.folder_button = QToolButton()
+        self.folder_button.setObjectName("FolderButton")
+        self.folder_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self.folder_button.setFixedSize(42, 34)
         self.folder_button.setToolTip(t("tooltip.folder"))
         self.folder_button.clicked.connect(self._select_folder)
         folder_row.addWidget(self.folder_edit, 1)
@@ -297,9 +305,9 @@ class TranslatorQtWindow(QMainWindow):
         version_label.setObjectName("FieldLabel")
         language_label = QLabel(t("field.target_language"))
         language_label.setObjectName("FieldLabel")
-        self.version_combo = QComboBox()
+        self.version_combo = ScrollSafeComboBox()
         self.version_combo.addItems(MC_VERSIONS)
-        self.language_combo = QComboBox()
+        self.language_combo = ScrollSafeComboBox()
         self.language_combo.addItems(list(LANGUAGES.keys()))
         self.language_combo.currentTextChanged.connect(self._refresh_system_readiness)
         selectors.addWidget(version_label, 0, 0)
@@ -315,7 +323,8 @@ class TranslatorQtWindow(QMainWindow):
         row.setSpacing(8)
         label = QLabel(t("field.engine"))
         label.setObjectName("FieldLabel")
-        self.engine_combo = QComboBox()
+        label.setFixedWidth(92)
+        self.engine_combo = ScrollSafeComboBox()
         self.engine_combo.addItems(["Google", "DeepL", rt("engine.local"), "OpenRouter"])
         self.engine_combo.currentTextChanged.connect(self._engine_changed)
         row.addWidget(label)
@@ -338,8 +347,10 @@ class TranslatorQtWindow(QMainWindow):
         self.google_options = QWidget()
         google_layout = QHBoxLayout(self.google_options)
         google_layout.setContentsMargins(0, 0, 0, 0)
-        google_layout.addWidget(QLabel(t("field.google_mode")))
-        self.google_mode_combo = QComboBox()
+        google_label = QLabel(t("field.google_mode"))
+        google_label.setFixedWidth(92)
+        google_layout.addWidget(google_label)
+        self.google_mode_combo = ScrollSafeComboBox()
         self.google_mode_combo.addItem(t("google.single"), "single")
         self.google_mode_combo.addItem(t("google.batch"), "batch")
         google_layout.addWidget(self.google_mode_combo, 1)
@@ -351,7 +362,7 @@ class TranslatorQtWindow(QMainWindow):
         ai_grid.setHorizontalSpacing(8)
         ai_grid.setVerticalSpacing(7)
         ai_grid.addWidget(QLabel(t("field.ai_mode")), 0, 0, 1, 2)
-        self.ai_mode_combo = QComboBox()
+        self.ai_mode_combo = ScrollSafeComboBox()
         self.ai_mode_combo.addItem(t("ai.safe"), "safe")
         self.ai_mode_combo.addItem(t("ai.context"), "context")
         ai_grid.addWidget(self.ai_mode_combo, 0, 2)
@@ -359,7 +370,7 @@ class TranslatorQtWindow(QMainWindow):
         self.ai_batch_label = QLabel(t("field.ai_batch_limit"))
         ai_grid.addWidget(self.ai_batch_label, 1, 0)
         ai_grid.addWidget(HelpMarker(t("tooltip.ai_batch")), 1, 1)
-        self.ai_batch_spin = QSpinBox()
+        self.ai_batch_spin = ScrollSafeSpinBox()
         self.ai_batch_spin.setRange(1, 40)
         self.ai_batch_spin.setValue(20)
         self.ai_batch_spin.valueChanged.connect(self._refresh_footer)
@@ -438,8 +449,18 @@ class TranslatorQtWindow(QMainWindow):
         return card
 
     def _build_action_card(self) -> QWidget:
-        card = Card(t("card.actions"))
+        panel = QFrame()
+        panel.setObjectName("SidebarActions")
+        body = QVBoxLayout(panel)
+        body.setContentsMargins(12, 10, 12, 10)
+        body.setSpacing(7)
+
+        title = QLabel(t("card.actions").upper())
+        title.setObjectName("SectionTitle")
+        body.addWidget(title)
+
         action_row = QHBoxLayout()
+        action_row.setSpacing(7)
         self.analyze_button = QPushButton(t("button.analysis"))
         self.start_button = QPushButton(t("button.start"))
         self.start_button.setObjectName("PrimaryButton")
@@ -449,9 +470,10 @@ class TranslatorQtWindow(QMainWindow):
         self.start_button.clicked.connect(self._start_translation)
         action_row.addWidget(self.analyze_button)
         action_row.addWidget(self.start_button, 1)
-        card.body.addLayout(action_row)
+        body.addLayout(action_row)
 
         run_row = QHBoxLayout()
+        run_row.setSpacing(7)
         self.pause_button = QPushButton(t("button.pause"))
         self.pause_button.setObjectName("WarningButton")
         self.stop_button = QPushButton(t("button.stop"))
@@ -462,12 +484,15 @@ class TranslatorQtWindow(QMainWindow):
         self.stop_button.clicked.connect(self._stop)
         run_row.addWidget(self.pause_button, 1)
         run_row.addWidget(self.stop_button, 1)
-        card.body.addLayout(run_row)
+        body.addLayout(run_row)
+
+        for button in (self.analyze_button, self.start_button, self.pause_button, self.stop_button):
+            button.setFixedHeight(40)
 
         self.lock_hint = QLabel(t("lock.hint"))
         self.lock_hint.setObjectName("MutedLabel")
-        card.body.addWidget(self.lock_hint)
-        return card
+        body.addWidget(self.lock_hint)
+        return panel
 
     def _build_content(self) -> QWidget:
         content = QWidget()
@@ -511,14 +536,13 @@ class TranslatorQtWindow(QMainWindow):
         self.task_title = QLabel(t("task.idle"))
         self.task_title.setObjectName("StrongLabel")
         self.task_percent = QLabel("0.0%")
-        self.task_percent.setObjectName("KpiValue")
+        self.task_percent.setObjectName("TaskPercent")
         title_row.addWidget(self.task_title, 1)
         title_row.addWidget(self.task_percent)
         card.body.addLayout(title_row)
 
-        self.task_status = QLabel(t("task.ready"))
+        self.task_status = ElidedLabel(t("task.ready"))
         self.task_status.setObjectName("MutedLabel")
-        self.task_status.setWordWrap(True)
         card.body.addWidget(self.task_status)
 
         self.segmented_progress = SegmentedProgressBar()
@@ -526,17 +550,20 @@ class TranslatorQtWindow(QMainWindow):
         card.body.addWidget(self.segmented_progress)
 
         self.task_metrics_grid = QGridLayout()
-        self.task_metrics_grid.setHorizontalSpacing(18)
+        self.task_metrics_grid.setHorizontalSpacing(24)
         self.task_metrics_grid.setVerticalSpacing(8)
-        self.task_lines = LabeledValue(t("task.line"))
         self.task_speed = LabeledValue(t("task.speed"))
         self.task_elapsed = LabeledValue(t("task.elapsed"))
-        self.task_remaining = LabeledValue(t("task.remaining"))
-        self._task_metrics = (self.task_lines, self.task_speed, self.task_elapsed, self.task_remaining)
+        self._task_metrics = (self.task_speed, self.task_elapsed)
         for col, widget in enumerate(self._task_metrics):
             self.task_metrics_grid.addWidget(widget, 0, col)
             self.task_metrics_grid.setColumnStretch(col, 1)
         card.body.addLayout(self.task_metrics_grid)
+
+        self.task_percent.setVisible(False)
+        self.segmented_progress.setVisible(False)
+        for widget in self._task_metrics:
+            widget.setVisible(False)
         return card
 
     def _build_log_card(self) -> QWidget:
@@ -544,7 +571,7 @@ class TranslatorQtWindow(QMainWindow):
         toolbar = QGridLayout()
         toolbar.setHorizontalSpacing(8)
         toolbar.setVerticalSpacing(7)
-        self.log_filter = QComboBox()
+        self.log_filter = ScrollSafeComboBox()
         self.log_filter.addItem(t("log.all"), "all")
         self.log_filter.addItem(t("log.translated"), "translated")
         self.log_filter.addItem(t("log.issues"), "issues")
@@ -626,7 +653,7 @@ class TranslatorQtWindow(QMainWindow):
         if getattr(self, "_responsive_columns", None) == columns:
             return
         self._place_grid_widgets(self.status_grid, self._status_cards, columns)
-        self._place_grid_widgets(self.task_metrics_grid, self._task_metrics, columns)
+        self._place_grid_widgets(self.task_metrics_grid, self._task_metrics, min(columns, 2))
         self._responsive_columns = columns
 
     def _build_footer(self) -> QWidget:
@@ -869,6 +896,7 @@ class TranslatorQtWindow(QMainWindow):
         if self._worker and self._worker.is_alive():
             return
         self.job_state.start()
+        self._runtime_ended_at = None
         self._clear_log()
         self._job = self._new_job()
         options = self._translation_options()
@@ -899,6 +927,8 @@ class TranslatorQtWindow(QMainWindow):
         self._set_status(label, None)
 
     def _worker_finished(self, _kind: str) -> None:
+        if self._runtime_ended_at is None and self.job_state.snapshot().start_time:
+            self._runtime_ended_at = time.time()
         self._job = None
         self._worker = None
         if not self._closing:
@@ -919,6 +949,8 @@ class TranslatorQtWindow(QMainWindow):
             self._append_log(t("status.resume"), "green")
 
     def _stop(self) -> None:
+        if self._runtime_ended_at is None and self.job_state.snapshot().start_time:
+            self._runtime_ended_at = time.time()
         if self._job is not None:
             self._job.stop()
         else:
@@ -959,7 +991,17 @@ class TranslatorQtWindow(QMainWindow):
             self.pause_button.setText(t("button.pause"))
 
     def _set_status(self, text: str, progress) -> None:
-        self.task_status.setText(text)
+        compact = compact_runtime_status(text)
+        snapshot = self.job_state.snapshot()
+        generated_metrics = "Осталось:" in str(text) and " | " in str(text)
+        if compact:
+            display_text = compact
+        elif generated_metrics:
+            display_text = t("task.running") if snapshot.is_running else self.task_status.fullText()
+        else:
+            display_text = str(text)
+        self.task_status.setText(display_text)
+        self.task_status.setToolTip(str(text) if str(text) != display_text else display_text)
         if progress is not None:
             value = max(0.0, min(1.0, float(progress)))
             self.segmented_progress.setValue(value)
@@ -968,38 +1010,50 @@ class TranslatorQtWindow(QMainWindow):
 
     def _refresh_runtime_dashboard(self) -> None:
         snapshot = self.job_state.snapshot()
-        stats = stats_from_snapshot(snapshot, eta_text=self.job_state.eta_text())
+        frozen_now = self._runtime_ended_at if (not snapshot.is_running and self._runtime_ended_at is not None) else None
+        stats = stats_from_snapshot(snapshot, now=frozen_now, eta_text=self.job_state.eta_text())
 
-        total_text = f"{stats.processed:,} / {stats.total:,}".replace(",", " ") if stats.total else "—"
-        self.kpi_processed.value.setText(total_text)
-        self.kpi_processed.meta.setText(f"{stats.percent:.1f}%")
-        self.kpi_processed.progress.setValue(int(stats.percent * 10))
+        if stats.total:
+            total_text = f"{stats.processed:,} / {stats.total:,}".replace(",", " ")
+            self.kpi_processed.value.setText(total_text)
+            self.kpi_processed.meta.setText(f"{stats.percent:.1f}%")
+            self.kpi_processed.progress.setValue(int(stats.percent * 10))
 
-        self.kpi_success.value.setText(f"{stats.successful:,}".replace(",", " "))
-        self.kpi_success.meta.setText(rt("stats.processed_share", percent=stats.success_percent) if stats.processed else "—")
-        self.kpi_success.progress.setValue(int(stats.success_percent * 10))
+            self.kpi_success.value.setText(f"{stats.successful:,}".replace(",", " "))
+            self.kpi_success.meta.setText(rt("stats.processed_share", percent=stats.success_percent) if stats.processed else "—")
+            self.kpi_success.progress.setValue(int(stats.success_percent * 10))
 
-        self.kpi_errors.value.setText(str(stats.failed))
-        self.kpi_errors.meta.setText(rt("stats.processed_share", percent=stats.error_percent) if stats.processed else "—")
-        self.kpi_errors.progress.setValue(int(stats.error_percent * 10))
+            self.kpi_errors.value.setText(str(stats.failed))
+            self.kpi_errors.meta.setText(rt("stats.processed_share", percent=stats.error_percent) if stats.processed else "—")
+            self.kpi_errors.progress.setValue(int(stats.error_percent * 10))
 
-        self.kpi_eta.value.setText(stats.eta_text if snapshot.is_running else (rt("stats.done") if stats.total and stats.remaining_lines == 0 else "—"))
-        remaining_text = f"{stats.remaining_lines:,}".replace(",", " ")
-        self.kpi_eta.meta.setText(rt("stats.remaining_lines", count=remaining_text) if stats.total else "—")
-        self.kpi_eta.progress.setValue(int(stats.percent * 10) if stats.total else 0)
+            self.kpi_eta.value.setText(stats.eta_text if snapshot.is_running else (rt("stats.done") if stats.remaining_lines == 0 else "—"))
+            remaining_text = f"{stats.remaining_lines:,}".replace(",", " ")
+            self.kpi_eta.meta.setText(rt("stats.remaining_lines", count=remaining_text))
+            self.kpi_eta.progress.setValue(int(stats.percent * 10))
+        else:
+            for card in (self.kpi_processed, self.kpi_success, self.kpi_errors, self.kpi_eta):
+                card.value.setText("—")
+                card.meta.setText("—")
+                card.progress.setValue(0)
 
         if snapshot.total_files > 0:
             self.task_title.setText(f"{snapshot.current_file_type} · {snapshot.current_file_done}/{snapshot.total_files}")
 
+        has_task_progress = bool(snapshot.is_running or stats.total)
+        self.task_percent.setVisible(has_task_progress)
+        self.segmented_progress.setVisible(has_task_progress)
+        for widget in self._task_metrics:
+            widget.setVisible(has_task_progress)
+
         if stats.total:
             self.segmented_progress.setValue(stats.percent / 100.0)
             self.task_percent.setText(f"{stats.percent:.1f}%")
-            self.task_lines.value.setText(f"{stats.processed:,} / {stats.total:,}".replace(",", " "))
         else:
-            self.task_lines.value.setText("—")
+            self.segmented_progress.setValue(0.0)
+            self.task_percent.setText("0.0%")
         self.task_speed.value.setText(rt("stats.rate", rate=stats.lines_per_minute) if stats.lines_per_minute else "—")
         self.task_elapsed.value.setText(format_duration(stats.elapsed_seconds) if stats.elapsed_seconds else "—")
-        self.task_remaining.value.setText(stats.eta_text if snapshot.is_running else "—")
 
     def _append_log(self, message: str, tag: str = "white") -> None:
         color = LOG_COLORS.get(tag, LOG_COLORS["white"])

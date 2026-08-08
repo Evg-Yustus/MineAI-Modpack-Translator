@@ -7,6 +7,7 @@ existing test suite even when the optional Qt dependency is not installed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import time
 from pathlib import Path
 
@@ -43,6 +44,27 @@ class DashboardStats:
     lines_per_minute: float
     eta_text: str
     remaining_lines: int
+
+
+def compact_runtime_status(text: str) -> str:
+    """Remove dashboard metrics from JobState.get_full_status() text.
+
+    The same counters already exist in the KPI cards. Keeping only an engine/status
+    fragment prevents the current-task card from duplicating the whole dashboard.
+    Ordinary status messages (start/stop/errors) are returned unchanged.
+    """
+    value = str(text or "").strip()
+    if "Осталось:" not in value or " | " not in value:
+        return value
+
+    ignored_prefixes = ("Переведено:", "Обработано:", "Ошибки:", "Осталось:")
+    compact: list[str] = []
+    for part in value.split(" | "):
+        part = re.sub(r"^\[[^]]+\]\s*", "", part.strip())
+        if not part or part.startswith(ignored_prefixes):
+            continue
+        compact.append(part)
+    return " | ".join(compact)
 
 
 def format_duration(seconds: float) -> str:
