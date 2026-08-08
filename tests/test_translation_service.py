@@ -115,6 +115,26 @@ class TranslationServiceRegressionTests(unittest.TestCase):
         self.assertEqual(sum(progress), 2)
         self.assertTrue(any("объединены: 1" in msg for msg, _ in logs))
 
+    def test_success_log_keeps_full_source_and_translation_text(self):
+        source = (
+            "A deliberately long source sentence that exceeds forty characters "
+            "and must remain complete in the application journal"
+        )
+        translated = (
+            "Это намеренно длинная переведённая строка длиннее сорока символов, "
+            "которая должна полностью отображаться в журнале приложения"
+        )
+        engine = _Engine(lambda items: {next(iter(items)): translated})
+        logs = []
+        result = _Service(engine, _MemoryCache(), _Config()).translate_dict(
+            {"key": source},
+            TARGET_LANG,
+            _callbacks(logs),
+        )
+
+        self.assertEqual(result, {"key": translated})
+        self.assertIn((f" > {source} -> {translated}", "dim"), logs)
+
     def test_short_technical_identity_is_not_retranslated(self):
         cache = _MemoryCache()
         first = _Engine(lambda items: {next(iter(items)): "RF"})

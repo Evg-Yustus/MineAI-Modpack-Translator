@@ -217,7 +217,7 @@ class TranslationService:
                 if "Google" in source_label:
                     metric("fallback", len(output_keys))
             dup = f" ×{len(output_keys)}" if len(output_keys) > 1 else ""
-            callbacks.on_log(f" > {item.original[:40]} -> {text[:40]}{dup}", "dim")
+            callbacks.on_log(f" > {item.original} -> {text}{dup}", "dim")
             bump(len(output_keys))
             return True
 

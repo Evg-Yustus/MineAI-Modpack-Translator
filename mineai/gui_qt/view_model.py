@@ -13,6 +13,14 @@ from pathlib import Path
 from mineai.gui_qt.i18n_runtime import tr
 
 
+COMPACT_DASHBOARD_WIDTH = 1420
+
+
+def dashboard_columns(window_width: int) -> int:
+    """Return a safe dashboard column count for the current top-level width."""
+    return 2 if int(window_width) < COMPACT_DASHBOARD_WIDTH else 4
+
+
 ENGINE_OPTIONS = {
     "Google": ("google", "local"),
     "DeepL": ("deepl", "local"),

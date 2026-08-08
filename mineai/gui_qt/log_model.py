@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,30 @@ class LogEntry:
     level: str
     category: str
     segments: tuple[LogSegment, ...]
+
+
+@dataclass(frozen=True)
+class TranslationParts:
+    left: str
+    separator: str
+    right: str
+    suffix: str = ""
+
+
+def split_translation_message(message: str) -> TranslationParts | None:
+    """Split the standard successful translation log without altering raw text."""
+    separator = " -> " if " -> " in message else (" → " if " → " in message else "")
+    if not separator:
+        return None
+    left, _sep, right = message.partition(separator)
+    if not left or not right:
+        return None
+    suffix = ""
+    match = re.search(r"( ×\d+)$", right)
+    if match:
+        suffix = match.group(1)
+        right = right[: -len(suffix)]
+    return TranslationParts(left=left, separator=separator, right=right, suffix=suffix)
 
 
 def level_from_tag(tag: str) -> str:

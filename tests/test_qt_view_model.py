@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from mineai.gui_qt.view_model import engine_readiness, format_duration, stats_from_snapshot
+from mineai.gui_qt.view_model import dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
 
 
 class _Config:
@@ -12,6 +12,17 @@ class _Config:
 
     def get(self, section, key):
         return self.values.get((section, key), "")
+
+
+class ResponsiveLayoutTests(unittest.TestCase):
+    def test_dashboard_switches_to_two_columns_on_narrow_windows(self):
+        self.assertEqual(dashboard_columns(1240), 2)
+        self.assertEqual(dashboard_columns(1366), 2)
+        self.assertEqual(dashboard_columns(1419), 2)
+
+    def test_dashboard_keeps_four_columns_when_space_is_available(self):
+        self.assertEqual(dashboard_columns(1420), 4)
+        self.assertEqual(dashboard_columns(1520), 4)
 
 
 class DashboardStatsTests(unittest.TestCase):
