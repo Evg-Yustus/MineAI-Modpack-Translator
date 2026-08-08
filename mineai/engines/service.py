@@ -386,13 +386,18 @@ class TranslationService:
             if owner_key in accepted:
                 continue
             output_keys = aliases[owner_key]
+            
+            for k in output_keys:
+                result[k] = item.original
+                
+            if not callbacks.should_run():
+                continue
+                
             reason = failure_reasons.get(owner_key, "нет результата")
             callbacks.on_log(
                 f"⚠️ Строка не переведена: {item.original[:90]!r}; {reason}",
                 "yellow",
             )
-            for k in output_keys:
-                result[k] = item.original
             bump(len(output_keys))
             metric("failed", len(output_keys))
 

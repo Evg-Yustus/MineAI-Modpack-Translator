@@ -67,6 +67,7 @@ TERMINOLOGY_FIXES = load_dictionary()
 def polish_translation(text: str) -> str:
     if not isinstance(text, str) or not text:
         return text
+    text = text.strip()
     # Чиним пробелы внутри самих Minecraft-кодов:
     text = re.sub(r"([&§])\s+([0-9a-fk-or])", r"\1\2", text, flags=re.IGNORECASE)
 

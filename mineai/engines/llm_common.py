@@ -67,6 +67,16 @@ def build_translation_prompt(
     tech_rules = prompts.get("technical", get_default_prompts()["technical"])
 
     # --- ЯВНЫЙ СПИСОК МАРКЕРОВ: что именно нельзя менять ---
+    from mineai.text_processing import PLACEHOLDER_PATTERN
+    has_markers = any(PLACEHOLDER_PATTERN.search(v) for v in payload.values())
+
+    if not has_markers:
+        # Убираем все упоминания о маркерах из промпта
+        tech_rules = re.sub(r'(?i)\n?.*\[#N#\].*', '', tech_rules)
+        tech_rules = re.sub(r'(?i)\n?.*markers.*', '', tech_rules)
+        tech_rules = tech_rules.replace("{markers}", "")
+        return f"{intro}\n\n{tech_rules.strip()}\n\nDATA:\n{blob}"
+
     manifest = build_marker_manifest(payload)
     if "{markers}" in tech_rules:
         # Если вставил {markers} в редакторе промптов — список встанет туда
@@ -91,18 +101,31 @@ def parse_llm_json_response(content: str) -> dict[str, object]:
         flags=re.IGNORECASE | re.MULTILINE,
     ).strip()
 
-    # Ищем первый валидный JSON-объект (защита от Extra data и приписок ИИ)
+    # Ищем первый валидный JSON-объект, игнорируя скобки внутри строк
     start_idx = text.find('{')
     if start_idx != -1:
         stack = 0
+        in_str = False
+        escaped = False
         for i in range(start_idx, len(text)):
-            if text[i] == '{':
-                stack += 1
-            elif text[i] == '}':
-                stack -= 1
-                if stack == 0:
-                    text = text[start_idx:i+1]
-                    break
+            c = text[i]
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif c == '\\':
+                    escaped = True
+                elif c == '"':
+                    in_str = False
+            else:
+                if c == '"':
+                    in_str = True
+                elif c == '{':
+                    stack += 1
+                elif c == '}':
+                    stack -= 1
+                    if stack == 0:
+                        text = text[start_idx:i+1]
+                        break
 
     # Чиним литеральные newlines внутри JSON-строк:
     # заменяем реальный \n между кавычками на экранированный \\n
@@ -226,7 +249,19 @@ def split_by_placeholders(masked: str, max_per_chunk: int = 10) -> list[str]:
     if start < len(masked):
         chunks.append(masked[start:])
 
-    return chunks
+    return [c for c in chunks if c.strip()]
+
+def _fix_marker_typos(raw: str, masked_source: str) -> str:
+    """Auto-fixes AI typos in markers."""
+    orig_markers = PLACEHOLDER_PATTERN.findall(masked_source)
+    if not orig_markers:
+        return raw
+    
+    # Ищет сломанные маркеры: [#4%], [%4#], [4#], [№4№], 【#4】 и т.д.
+    pattern = r'[\[【]\s*[#%№]+\s*(\d+)\s*[#%№]*\s*[\]】]|[\[【]\s*[#%№]*\s*(\d+)\s*[#%№]+\s*[\]】]'
+    
+    # Восстанавливаем опечатки до идеального [#N#]
+    return re.sub(pattern, lambda m: f"[#{m.group(1) or m.group(2)}#]", raw)
 
 class BatchLlmEngine(TranslationEngine):
     """Batched JSON translation via any chat-completions API."""
@@ -248,7 +283,7 @@ class BatchLlmEngine(TranslationEngine):
         self.label = label
         self.retries = retries  # <--- НОВАЯ СТРОКА
         self.batch_size = 40 if mode == "context" else 20
-        self.max_tokens = 4096 if mode == "context" else 2048
+        self.max_tokens = 8192 if mode == "context" else 4096
 
     def translate_batch(
         self,
@@ -343,7 +378,7 @@ class BatchLlmEngine(TranslationEngine):
         callbacks: EngineCallbacks,
     ) -> list[str]:
         PLACEHOLDER_THRESHOLD = 20
-        CHUNK_SIZE = 6
+        CHUNK_SIZE = 3
         # Разделяем ключи на обычные и сложные
         normal_keys = []
         complex_keys = []
@@ -400,6 +435,9 @@ class BatchLlmEngine(TranslationEngine):
                             content.strip(),
                             flags=re.IGNORECASE | re.MULTILINE,
                         ).strip()
+                        if raw:
+                            raw = _fix_marker_typos(raw, sub_text)
+                            
                         if raw and placeholders_match(raw, sub_text):
                             translated_parts.append(raw)
                             chunk_ok = True
@@ -470,6 +508,8 @@ class BatchLlmEngine(TranslationEngine):
                         all_failed.append(key)
                         dump_ai_error(items[key].masked, raw, f"Слишком длинный текст ({len(raw)} при оригинале {orig_len})")
                         continue
+                    raw = _fix_marker_typos(raw, items[key].masked)
+                    
                     if not placeholders_match(raw, items[key].masked):
                         fixed = repair_markers(
                             self._call_api, items[key].masked, raw, self.max_tokens

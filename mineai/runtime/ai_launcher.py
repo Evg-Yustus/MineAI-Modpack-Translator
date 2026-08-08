@@ -64,7 +64,7 @@ class AiLauncher:
                     "--port",
                     "5001",
                     "--contextsize",
-                    "4096",
+                    "8192",
                     "--gpulayers",
                     gpu,
                 ]
