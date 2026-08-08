@@ -1,9 +1,10 @@
 import tempfile
+from pathlib import Path
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from mineai.gui_qt.view_model import compact_runtime_status, dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
+from mineai.gui_qt.view_model import compact_runtime_status, dashboard_columns, detected_source_roots, engine_readiness, format_duration, stats_from_snapshot
 
 
 class _Config:
@@ -97,6 +98,18 @@ class EngineReadinessTests(unittest.TestCase):
             ready, text = engine_readiness(cfg, "Локальный ИИ")
             self.assertTrue(ready)
             self.assertIn("model.gguf", text)
+
+
+class SourceRootDetectionTests(unittest.TestCase):
+    def test_detects_all_supported_top_level_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("mods", "config", "kubejs", "defaultconfigs"):
+                (root / name).mkdir()
+            self.assertEqual(
+                detected_source_roots(root),
+                ("mods", "config", "kubejs", "defaultconfigs"),
+            )
 
 
 if __name__ == "__main__":

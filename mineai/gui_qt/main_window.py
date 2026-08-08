@@ -13,8 +13,8 @@ import threading
 import time
 import traceback
 
-from PyQt6.QtCore import QTimer, Qt, QUrl
-from PyQt6.QtGui import QColor, QDesktopServices, QIcon, QPixmap, QTextCharFormat, QTextCursor, QTextOption
+from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtGui import QColor, QIcon, QPixmap, QTextCharFormat, QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QToolButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStyle,
     QPlainTextEdit,
@@ -50,7 +51,7 @@ from mineai.gui_qt.i18n import t, translator
 from mineai.gui_qt.i18n_runtime import tr as rt
 from mineai.gui_qt.log_model import LogEntry, LogSegment, entry_from_message, matches_entry, split_translation_message
 from mineai.gui_qt.theme import theme_qss
-from mineai.gui_qt.view_model import ENGINE_OPTIONS, compact_runtime_status, dashboard_columns, engine_readiness, format_duration, stats_from_snapshot
+from mineai.gui_qt.view_model import ENGINE_OPTIONS, compact_runtime_status, dashboard_columns, detected_source_roots, engine_readiness, format_duration, stats_from_snapshot
 from mineai.gui_qt.widgets import Card, ElidedLabel, HelpMarker, LabeledValue, ScrollSafeComboBox, ScrollSafeSpinBox, SegmentedProgressBar, StatCard, StatusPill
 
 
@@ -109,6 +110,7 @@ class TranslatorQtWindow(QMainWindow):
         self._closing = False
         self._allow_close = False
         self._runtime_ended_at: float | None = None
+        self._task_detail = ""
         self._log_entries: list[LogEntry] = []
         self._log_file = None
         try:
@@ -223,16 +225,13 @@ class TranslatorQtWindow(QMainWindow):
         layout.addWidget(self.migration_button)
 
         layout.addSpacing(4)
-        self.interface_language = ScrollSafeComboBox()
-        self.interface_language.setObjectName("HeaderLanguageCombo")
-        self.interface_language.addItem("RU", "ru")
-        self.interface_language.addItem("EN", "en")
-        language_index = self.interface_language.findData(self._ui_language)
-        self.interface_language.setCurrentIndex(language_index if language_index >= 0 else 0)
-        self.interface_language.setFixedWidth(58)
-        self.interface_language.setToolTip(t("header.language_tooltip"))
-        self.interface_language.currentIndexChanged.connect(self._change_interface_language)
+        self.interface_language = QToolButton()
+        self.interface_language.setObjectName("HeaderLanguageToggle")
+        self.interface_language.setFixedSize(46, 36)
+        self.interface_language.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.interface_language.clicked.connect(self._toggle_interface_language)
         layout.addWidget(self.interface_language)
+        self._refresh_language_button()
 
         self.theme_button = QToolButton()
         self.theme_button.setObjectName("ThemeToggle")
@@ -248,8 +247,8 @@ class TranslatorQtWindow(QMainWindow):
         host.setObjectName("SidebarHost")
         host.setFixedWidth(430)
         host_layout = QVBoxLayout(host)
-        host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(0)
+        host_layout.setContentsMargins(0, 0, 4, 0)
+        host_layout.setSpacing(10)
 
         scroll = QScrollArea()
         scroll.setObjectName("Sidebar")
@@ -260,7 +259,7 @@ class TranslatorQtWindow(QMainWindow):
         content.setObjectName("SidebarContent")
         scroll.viewport().setObjectName("SidebarViewport")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 4, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         scroll.setWidget(content)
 
@@ -468,7 +467,7 @@ class TranslatorQtWindow(QMainWindow):
         self.start_button.setToolTip(t("tooltip.start"))
         self.analyze_button.clicked.connect(self._start_analysis)
         self.start_button.clicked.connect(self._start_translation)
-        action_row.addWidget(self.analyze_button)
+        action_row.addWidget(self.analyze_button, 1)
         action_row.addWidget(self.start_button, 1)
         body.addLayout(action_row)
 
@@ -488,6 +487,8 @@ class TranslatorQtWindow(QMainWindow):
 
         for button in (self.analyze_button, self.start_button, self.pause_button, self.stop_button):
             button.setFixedHeight(40)
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
         self.lock_hint = QLabel(t("lock.hint"))
         self.lock_hint.setObjectName("MutedLabel")
@@ -592,26 +593,31 @@ class TranslatorQtWindow(QMainWindow):
         self.log_full_lines.setToolTip(t("log.full_lines_tooltip"))
         self.log_full_lines.toggled.connect(self._render_log)
 
-        open_log = QPushButton(t("button.open_log"))
-        clear = QPushButton(t("button.clear"))
-        save = QPushButton(t("button.save"))
-        open_log.clicked.connect(self._open_log_file)
+        clear = QToolButton()
+        save = QToolButton()
+        for button in (clear, save):
+            button.setObjectName("LogToolButton")
+            button.setFixedSize(34, 34)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        save.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        clear.setToolTip(t("button.clear"))
+        save.setToolTip(t("button.export_log"))
         clear.clicked.connect(self._clear_log)
         save.clicked.connect(self._save_log)
 
         toolbar.addWidget(self.log_filter, 0, 0)
         toolbar.addWidget(self.log_search, 0, 1)
-        toolbar.addWidget(self.log_autoscroll, 0, 2)
         toolbar.setColumnStretch(1, 1)
 
         log_actions = QHBoxLayout()
-        log_actions.setSpacing(7)
+        log_actions.setSpacing(10)
+        log_actions.addWidget(self.log_autoscroll)
         log_actions.addWidget(self.log_full_lines)
         log_actions.addStretch(1)
-        log_actions.addWidget(open_log)
         log_actions.addWidget(clear)
         log_actions.addWidget(save)
-        toolbar.addLayout(log_actions, 1, 0, 1, 3)
+        toolbar.addLayout(log_actions, 1, 0, 1, 2)
         card.body.addLayout(toolbar)
 
         self.log_view = QPlainTextEdit()
@@ -699,11 +705,7 @@ class TranslatorQtWindow(QMainWindow):
                 self.folder_state.setText(t("folder.missing"))
                 self.folder_state.setObjectName("DangerText")
             else:
-                markers = []
-                if (root / "mods").is_dir():
-                    markers.append("mods/ ✓")
-                if (root / "config").is_dir():
-                    markers.append("config/ ✓")
+                markers = [f"{name}/ ✓" for name in detected_source_roots(root)]
                 suffix = "   " + "   ".join(markers) if markers else ""
                 self.folder_state.setText(t("folder.found") + suffix)
                 self.folder_state.setObjectName("ReadyText")
@@ -758,17 +760,18 @@ class TranslatorQtWindow(QMainWindow):
         self._refresh_system_readiness()
         self._refresh_footer()
 
-    def _change_interface_language(self, _index: int) -> None:
-        code = self.interface_language.currentData() or "ru"
-        if code == self._ui_language:
+    def _refresh_language_button(self) -> None:
+        if not hasattr(self, "interface_language"):
             return
+        is_ru = self._ui_language == "ru"
+        self.interface_language.setText("RU" if is_ru else "EN")
+        target = "English" if is_ru else "Русский"
+        self.interface_language.setToolTip(f"{t('header.language_tooltip')} → {target}")
+
+    def _toggle_interface_language(self) -> None:
         if self._worker and self._worker.is_alive():
-            previous = self.interface_language.findData(self._ui_language)
-            if previous >= 0:
-                self.interface_language.blockSignals(True)
-                self.interface_language.setCurrentIndex(previous)
-                self.interface_language.blockSignals(False)
             return
+        code = "en" if self._ui_language == "ru" else "ru"
         settings.set("GENERAL", "ui_language", code)
         translator.set_language(code)
         self._ui_language = translator.language
@@ -991,16 +994,16 @@ class TranslatorQtWindow(QMainWindow):
             self.pause_button.setText(t("button.pause"))
 
     def _set_status(self, text: str, progress) -> None:
-        compact = compact_runtime_status(text)
         snapshot = self.job_state.snapshot()
         generated_metrics = "Осталось:" in str(text) and " | " in str(text)
-        if compact:
-            display_text = compact
-        elif generated_metrics:
-            display_text = t("task.running") if snapshot.is_running else self.task_status.fullText()
+        if generated_metrics:
+            self._task_detail = compact_runtime_status(text)
+            display_text = ""
         else:
+            self._task_detail = ""
             display_text = str(text)
         self.task_status.setText(display_text)
+        self.task_status.setVisible(bool(display_text))
         self.task_status.setToolTip(str(text) if str(text) != display_text else display_text)
         if progress is not None:
             value = max(0.0, min(1.0, float(progress)))
@@ -1038,7 +1041,10 @@ class TranslatorQtWindow(QMainWindow):
                 card.progress.setValue(0)
 
         if snapshot.total_files > 0:
-            self.task_title.setText(f"{snapshot.current_file_type} · {snapshot.current_file_done}/{snapshot.total_files}")
+            title = f"{snapshot.current_file_type} · {snapshot.current_file_done}/{snapshot.total_files}"
+            if self._task_detail:
+                title += f": {self._task_detail}"
+            self.task_title.setText(title)
 
         has_task_progress = bool(snapshot.is_running or stats.total)
         self.task_percent.setVisible(has_task_progress)
@@ -1125,7 +1131,14 @@ class TranslatorQtWindow(QMainWindow):
         return (LogSegment(preview, entry.segments[0].color),)
 
     def _append_entry_to_view(self, entry: LogEntry, *, allow_scroll: bool = True) -> None:
-        cursor = self.log_view.textCursor()
+        bar = self.log_view.verticalScrollBar()
+        preserve_scroll = allow_scroll and not self.log_autoscroll.isChecked()
+        previous_scroll = bar.value() if preserve_scroll else None
+
+        # Insert through a document cursor instead of moving the editor's visible
+        # cursor to the end. setTextCursor() scrolls QPlainTextEdit to that cursor
+        # even when the Autoscroll checkbox is disabled.
+        cursor = QTextCursor(self.log_view.document())
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if not self.log_view.document().isEmpty():
             cursor.insertBlock()
@@ -1134,10 +1147,11 @@ class TranslatorQtWindow(QMainWindow):
             fmt.setForeground(QColor(segment.color))
             fmt.setFontFamily("Cascadia Mono")
             cursor.insertText(segment.text, fmt)
-        self.log_view.setTextCursor(cursor)
+
         if allow_scroll and self.log_autoscroll.isChecked():
-            bar = self.log_view.verticalScrollBar()
             bar.setValue(bar.maximum())
+        elif previous_scroll is not None:
+            bar.setValue(min(previous_scroll, bar.maximum()))
 
     def _render_log(self, *_args) -> None:
         if not hasattr(self, "log_view"):
@@ -1161,16 +1175,8 @@ class TranslatorQtWindow(QMainWindow):
         self._log_entries.clear()
         self.log_view.clear()
 
-    def _open_log_file(self) -> None:
-        if self._log_file is not None:
-            try:
-                self._log_file.flush()
-            except OSError:
-                pass
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(LOG_PATH)))
-
     def _save_log(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, t("button.save"), "mineai_log_export.txt", "Text files (*.txt);;All files (*)")
+        path, _ = QFileDialog.getSaveFileName(self, t("button.export_log"), "mineai_log_export.txt", "Text files (*.txt);;All files (*)")
         if not path:
             return
         lines = [entry.plain_text for entry in self._log_entries if self._log_entry_visible(entry)]
@@ -1232,6 +1238,9 @@ class TranslatorQtWindow(QMainWindow):
             if ENGINE_OPTIONS.get(label) == engine_spec:
                 self.engine_combo.setCurrentIndex(index)
                 break
+        # setCurrentIndex() does not emit when the restored index is already 0.
+        # Synchronize dependent option panels explicitly after every locale rebuild.
+        self._engine_changed(self.engine_combo.currentText())
         google_index = self.google_mode_combo.findData(state["google_mode"])
         if google_index >= 0:
             self.google_mode_combo.setCurrentIndex(google_index)

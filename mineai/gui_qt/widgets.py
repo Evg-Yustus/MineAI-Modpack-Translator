@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QPainter
-from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QProgressBar, QSizePolicy, QSpinBox, QToolButton, QToolTip, QVBoxLayout, QWidget
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QProgressBar, QSizePolicy, QSpinBox, QStyle, QStyleOptionSpinBox, QToolButton, QToolTip, QVBoxLayout, QWidget
 
 
 class ScrollSafeComboBox(QComboBox):
@@ -29,10 +29,52 @@ class ScrollSafeComboBox(QComboBox):
 
 
 class ScrollSafeSpinBox(QSpinBox):
-    """SpinBox that leaves the mouse wheel to the containing settings panel."""
+    """SpinBox that leaves the wheel to its parent and paints reliable step arrows."""
 
     def wheelEvent(self, event) -> None:
         event.ignore()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+
+        option = QStyleOptionSpinBox()
+        self.initStyleOption(option)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        color = self.palette().text().color()
+        if not self.isEnabled():
+            color.setAlpha(110)
+        pen = QPen(color, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+
+        controls = (
+            (QStyle.SubControl.SC_SpinBoxUp, True),
+            (QStyle.SubControl.SC_SpinBoxDown, False),
+        )
+        for control, upward in controls:
+            rect = self.style().subControlRect(
+                QStyle.ComplexControl.CC_SpinBox,
+                option,
+                control,
+                self,
+            )
+            if rect.isValid() and not rect.isEmpty():
+                self._draw_step_chevron(painter, rect, upward)
+
+    @staticmethod
+    def _draw_step_chevron(painter: QPainter, rect, upward: bool) -> None:
+        center = rect.center()
+        half_width = 3.5
+        half_height = 2.5
+        direction = -1.0 if upward else 1.0
+        left = QPointF(center.x() - half_width, center.y() - direction * half_height)
+        middle = QPointF(center.x(), center.y() + direction * half_height)
+        right = QPointF(center.x() + half_width, center.y() - direction * half_height)
+        painter.drawLine(left, middle)
+        painter.drawLine(middle, right)
 
 
 class ElidedLabel(QLabel):

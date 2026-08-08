@@ -22,6 +22,12 @@ def dashboard_columns(window_width: int) -> int:
     return 2 if int(window_width) < COMPACT_DASHBOARD_WIDTH else 4
 
 
+def detected_source_roots(mc_dir: str | Path) -> tuple[str, ...]:
+    """Return supported top-level source folders that actually exist."""
+    root = Path(mc_dir)
+    return tuple(name for name in ("mods", "config", "kubejs", "defaultconfigs") if (root / name).is_dir())
+
+
 ENGINE_OPTIONS = {
     "Google": ("google", "local"),
     "DeepL": ("deepl", "local"),

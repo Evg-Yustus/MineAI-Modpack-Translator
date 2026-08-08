@@ -38,7 +38,7 @@ from mineai.engines.llm_common import get_default_prompts, load_prompts, save_pr
 from mineai.processors.migration import run_migration
 from mineai.gui_qt.bridge import MigrationSignals
 from mineai.gui_qt.i18n import t
-from mineai.gui_qt.widgets import HelpMarker
+from mineai.gui_qt.widgets import HelpMarker, ScrollSafeSpinBox
 
 
 class SettingsDialog(QDialog):
@@ -156,7 +156,7 @@ class SettingsDialog(QDialog):
 
     def _spin_row(self, layout, label: str, value: int, minimum: int, maximum: int) -> QSpinBox:
         layout.addWidget(self._field_label(label))
-        spin = QSpinBox()
+        spin = ScrollSafeSpinBox()
         spin.setRange(minimum, maximum)
         spin.setValue(value)
         layout.addWidget(spin)
