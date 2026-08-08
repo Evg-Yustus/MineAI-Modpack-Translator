@@ -1,5 +1,6 @@
 customtkinter>=5.2.0
 requests>=2.31.0
+PyQt6>=6.7,<7
 
 # Только для сборки EXE (build.bat):
 # pyinstaller>=6.0

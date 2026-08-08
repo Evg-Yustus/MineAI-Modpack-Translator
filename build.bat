@@ -1,4 +1,5 @@
 @echo off
+setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
@@ -11,7 +12,7 @@ echo [1/4] Зависимости...
 python -m pip install -r requirements.txt pyinstaller -q
 if errorlevel 1 (
     echo Ошибка: не удалось установить пакеты. Проверьте Python 3.10+
-    pause
+    if not defined CI pause
     exit /b 1
 )
 
@@ -23,7 +24,7 @@ if errorlevel 1 (
     echo  ОШИБКА СИНТАКСИСА! Сборка остановлена.
     echo  Исправьте файлы, указанные выше.
     echo =============================================
-    pause
+    if not defined CI pause
     exit /b 1
 )
 echo    Все файлы корректны.
@@ -32,7 +33,13 @@ echo [3/4] PyInstaller...
 python -m PyInstaller --noconfirm --clean --onefile --noconsole --icon="icon.ico" --add-data "icon.ico;." --name "MineAI_Translator" mineai\__main__.py
 if errorlevel 1 (
     echo Ошибка сборки.
-    pause
+    if not defined CI pause
+    exit /b 1
+)
+
+if not exist "dist\MineAI_Translator.exe" (
+    echo Ошибка: dist\MineAI_Translator.exe не создан.
+    if not defined CI pause
     exit /b 1
 )
 
@@ -43,4 +50,5 @@ echo.
 echo Рядом с EXE положите при необходимости:
 echo    settings.ini, dictionary.json, cache.json
 echo.
-pause
+if not defined CI pause
+exit /b 0
