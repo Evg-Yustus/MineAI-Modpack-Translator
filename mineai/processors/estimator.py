@@ -9,6 +9,7 @@ from mineai.constants import (
     RESEARCH_PATH_MARKERS,
 )
 from mineai.json_utils import load_lenient_json
+from mineai.processors.bq_baseline import resolve_bq_force_baseline
 from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
     count_translatable_lang_entries,
@@ -402,10 +403,9 @@ class StringEstimator:
         mode: str,
         target_regex: str,
     ) -> int:
-        backup = path + ".bak"
         source_path = (
-            backup
-            if mode == "force" and os.path.exists(backup)
+            resolve_bq_force_baseline(path).source_path
+            if mode == "force"
             else path
         )
         try:

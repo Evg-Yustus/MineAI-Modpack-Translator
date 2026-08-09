@@ -6,6 +6,12 @@ from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
 from mineai.io_utils import atomic_write_text
 from mineai.language_validation import uses_same_latin_script
+from mineai.processors.bq_baseline import (
+    baseline_tracks_current,
+    refresh_bq_force_baseline,
+    resolve_bq_force_baseline,
+    write_bq_baseline_state,
+)
 from mineai.processors.selection import skip_threshold_reached
 from mineai.processors.translation_state import collect_bq_selection_with_baseline
 from mineai.runtime.state import JobState
@@ -24,10 +30,20 @@ class BQProcessor:
 
     def process(self, file_path: str, *, target_lang: dict, mode: str) -> None:
         backup = file_path + ".bak"
+        force_baseline = (
+            resolve_bq_force_baseline(file_path)
+            if mode == "force"
+            else None
+        )
         source_path = (
-            backup
-            if mode == "force" and os.path.exists(backup)
+            force_baseline.source_path
+            if force_baseline is not None
             else file_path
+        )
+        baseline_trusted = (
+            not force_baseline.refresh_backup
+            if force_baseline is not None
+            else baseline_tracks_current(file_path)
         )
 
         with open(source_path, "r", encoding="utf-8") as source_file:
@@ -61,8 +77,19 @@ class BQProcessor:
             )
             return
 
-        if not os.path.exists(backup):
+        if force_baseline is not None and force_baseline.refresh_backup:
+            if os.path.exists(backup):
+                self.callbacks.on_log(
+                    f"⚠ BQ {os.path.basename(file_path)}: существующий .bak "
+                    "не подтверждён для текущего файла; baseline обновлён "
+                    "из current перед Force",
+                    "yellow",
+                )
+            refresh_bq_force_baseline(file_path, force_baseline)
+            baseline_trusted = True
+        elif not os.path.exists(backup):
             shutil.copy2(file_path, backup)
+            baseline_trusted = True
 
         name = (
             os.path.basename(os.path.dirname(file_path))
@@ -92,3 +119,12 @@ class BQProcessor:
 
         payload = json.dumps(data, indent=2, ensure_ascii=False)
         atomic_write_text(file_path, payload)
+        if baseline_trusted:
+            try:
+                write_bq_baseline_state(file_path)
+            except OSError as exc:
+                self.callbacks.on_log(
+                    f"⚠ Не удалось сохранить BQ baseline state для "
+                    f"{os.path.basename(file_path)}: {exc}",
+                    "yellow",
+                )
