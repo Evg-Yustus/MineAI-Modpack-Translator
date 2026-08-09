@@ -10,6 +10,7 @@ from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
     count_translatable_lang_entries,
 )
+from mineai.processors.locale_paths import ensure_distinct_paths, target_locale_path
 from mineai.processors.selection import skip_threshold_reached
 from mineai.runtime.state import JobState
 
@@ -36,8 +37,10 @@ class LooseJsonProcessor:
         else:
             internal = "assets/kubejs/lang/" + os.path.basename(file_path)
 
-        tr_internal = internal.replace("en_us.json", f"{target_lang['file']}.json")
-        tr_disk = file_path.replace("en_us.json", f"{target_lang['file']}.json")
+        target_filename = f"{target_lang['file']}.json"
+        tr_internal = target_locale_path(internal, target_filename)
+        tr_disk = target_locale_path(file_path, target_filename)
+        ensure_distinct_paths(file_path, tr_disk)
 
         with open(file_path, encoding="utf-8") as f:
             en_data = load_lenient_json(f.read().encode("utf-8"))

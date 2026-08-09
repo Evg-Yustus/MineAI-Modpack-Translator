@@ -319,7 +319,12 @@ class StringEstimator:
                 source_data = load_lenient_json(
                     source_file.read().encode("utf-8")
                 )
-            target_path = path.replace("en_us.json", target_file)
+            target_path = re.sub(
+                r"en_us\.json$",
+                target_file,
+                path,
+                flags=re.IGNORECASE,
+            )
             target_data = {}
             if os.path.exists(target_path):
                 with open(target_path, encoding="utf-8") as target_handle:
