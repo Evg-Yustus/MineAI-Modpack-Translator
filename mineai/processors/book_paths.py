@@ -26,6 +26,9 @@ _MARKDOWN_EXTENSIONS = (".md", ".markdown", ".txt")
 _EXPLICIT_LOCALE_EXTENSIONS = (".lang", ".xml")
 _SOURCE_JSON_LOCALE = re.compile(r"/en_us/", re.IGNORECASE)
 _LEGACY_LANG_SOURCE = re.compile(r"(?i)(?<=/)en_us(?=\.lang$)")
+_SHORTHAND_LANG_JSON = re.compile(
+    r"(?i)^(?:data/)?[a-z0-9_.-]+/lang/en_us\.json$"
+)
 
 
 def _normalized_parts(path: str) -> list[str]:
@@ -85,6 +88,29 @@ def legacy_lang_target_path(source_path: str, target_code: str) -> str | None:
     if _LEGACY_LANG_SOURCE.search("/" + normalized) is None:
         return None
     return _LEGACY_LANG_SOURCE.sub(target_code.casefold(), normalized, count=1)
+
+
+def minecraft_lang_json_target_path(
+    source_path: str,
+    target_code: str,
+) -> str | None:
+    """Map JSON locales that can be represented by a Minecraft resource pack."""
+    normalized = source_path.replace("\\", "/").strip("/")
+    lower_path = normalized.casefold()
+    has_asset_root = (
+        lower_path.startswith("assets/")
+        or "/assets/" in lower_path
+    )
+    if not has_asset_root and _SHORTHAND_LANG_JSON.fullmatch(normalized) is None:
+        return None
+    if not lower_path.endswith("/en_us.json"):
+        return None
+    return re.sub(
+        r"(?i)en_us\.json$",
+        f"{target_code.casefold()}.json",
+        normalized,
+        count=1,
+    )
 
 
 class MarkdownBookLocator:

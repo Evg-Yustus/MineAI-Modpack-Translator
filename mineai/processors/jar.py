@@ -22,6 +22,7 @@ from mineai.processors.book_paths import (
     MarkdownBookLocator,
     legacy_lang_target_path,
     localized_json_target_path,
+    minecraft_lang_json_target_path,
 )
 from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
@@ -126,7 +127,13 @@ class JarProcessor:
                             item.filename,
                             target_lang["file"],
                         )
-                        is_lang = fl.endswith("en_us.json") and not is_book_json
+                        is_lang = (
+                            minecraft_lang_json_target_path(
+                                item.filename,
+                                target_lang["file"],
+                            ) is not None
+                            and not is_book_json
+                        )
 
                         if translate_mods and legacy_lang_target:
                             modified |= self._process_book_md(

@@ -13,6 +13,7 @@ from mineai.processors.book_paths import (
     MarkdownBookLocator,
     legacy_lang_target_path,
     localized_json_target_path,
+    minecraft_lang_json_target_path,
 )
 from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
@@ -151,7 +152,6 @@ class StringEstimator:
                     else ()
                 )
                 for item in archive_items:
-                    file_lower = item.filename.lower()
                     is_book_json = localized_json_target_path(
                         item.filename,
                         target_lang["file"],
@@ -163,7 +163,10 @@ class StringEstimator:
                         target_lang["file"],
                     )
                     is_lang = (
-                        file_lower.endswith("en_us.json")
+                        minecraft_lang_json_target_path(
+                            item.filename,
+                            target_lang["file"],
+                        ) is not None
                         and not is_book_json
                     )
 

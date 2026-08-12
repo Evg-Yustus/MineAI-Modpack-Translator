@@ -7,6 +7,7 @@ from mineai.processors.book_paths import (
     MarkdownBookLocator,
     legacy_lang_target_path,
     localized_json_target_path,
+    minecraft_lang_json_target_path,
 )
 
 
@@ -18,10 +19,7 @@ def _has_translatable_archive_source(path: str) -> bool:
         return False
     locator = MarkdownBookLocator(names, "ru_ru")
     return any(
-        (
-            name.replace("\\", "/").casefold().startswith("assets/")
-            and name.replace("\\", "/").casefold().endswith("/en_us.json")
-        )
+        minecraft_lang_json_target_path(name, "ru_ru") is not None
         or localized_json_target_path(name, "ru_ru") is not None
         or legacy_lang_target_path(name, "ru_ru") is not None
         or locator.target_path(name) is not None

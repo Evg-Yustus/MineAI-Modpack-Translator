@@ -20,6 +20,7 @@ from mineai.processors.book_paths import (
     MarkdownBookLocator,
     legacy_lang_target_path,
     localized_json_target_path,
+    minecraft_lang_json_target_path,
 )
 from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
@@ -333,7 +334,10 @@ class ModpackAnalyzer:
                 except (OSError, ValueError, FormatValidationError):
                     pass
                 continue
-            if not fl.endswith("en_us.json"):
+            if minecraft_lang_json_target_path(
+                item.filename,
+                target_file.removesuffix(".json"),
+            ) is None:
                 continue
             try:
                 en = load_lenient_json(zin.read(item))

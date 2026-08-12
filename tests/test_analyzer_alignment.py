@@ -105,6 +105,66 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
         self.assertEqual(estimated, 2)
         self.assertEqual(rows, [("📦", "Example", "Интерфейс", 0, 2, 0)])
 
+    def test_custom_application_localization_is_not_counted_as_minecraft_lang(self) -> None:
+        path = self._make_jar({
+            "crash_assistant_localization/en_us.json": json.dumps({
+                "crash.title": "Minecraft crashed",
+            }),
+        })
+        state = JobState()
+        state.start()
+
+        analyzed = ModpackAnalyzer(state)._analyze_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG["regex"],
+            True,
+            False,
+            lambda *_row: None,
+            "Crash Assistant",
+        )
+        estimated = StringEstimator(state)._estimate_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG,
+            "force",
+            True,
+            False,
+            False,
+        )
+
+        self.assertEqual(analyzed, (0, 0))
+        self.assertEqual(estimated, 0)
+
+    def test_shorthand_namespace_lang_json_remains_counted(self) -> None:
+        path = self._make_jar({
+            "ae2ct/lang/en_us.json": json.dumps({"ae2ct.tree": "Crafting Tree"}),
+        })
+        state = JobState()
+        state.start()
+
+        analyzed = ModpackAnalyzer(state)._analyze_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG["regex"],
+            True,
+            False,
+            lambda *_row: None,
+            "AE2CT",
+        )
+        estimated = StringEstimator(state)._estimate_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG,
+            "force",
+            True,
+            False,
+            False,
+        )
+
+        self.assertEqual(analyzed, (1, 0))
+        self.assertEqual(estimated, 1)
+
     def test_root_markdown_book_without_en_us_is_counted_by_both(self) -> None:
         path = self._make_jar({
             "assets/example/manual/page.md": "Manual page text",
