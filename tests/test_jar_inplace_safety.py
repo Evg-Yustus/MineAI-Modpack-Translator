@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import stat
 import tempfile
@@ -52,7 +52,7 @@ class JarInplaceSafetyTests(unittest.TestCase):
             os.chmod(path, 0o640)
             expected_mode = stat.S_IMODE(os.stat(path).st_mode)
 
-            JarProcessor(_Service(), state, _callbacks(logs)).process(
+            written_path = JarProcessor(_Service(), state, _callbacks(logs)).process(
                 path,
                 target_lang=TARGET_LANG,
                 mode="force",
@@ -62,6 +62,7 @@ class JarInplaceSafetyTests(unittest.TestCase):
                 pack_writer=None,
             )
 
+            self.assertEqual(written_path, path)
             with zipfile.ZipFile(path) as archive:
                 self.assertEqual(archive.testzip(), None)
                 self.assertIn("assets/example/lang/ru_ru.json", archive.namelist())

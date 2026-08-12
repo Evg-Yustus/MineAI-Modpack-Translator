@@ -1,4 +1,4 @@
-SETTINGS_FILE = "settings.ini"
+﻿SETTINGS_FILE = "settings.ini"
 CACHE_FILE_STD = "cache.json"
 CACHE_FILE_AI = "ai_cache.json"
 DICT_FILE = "dictionary.json"
@@ -6,6 +6,7 @@ KOBOLD_API = "http://localhost:5001/v1/chat/completions"
 KOBOLD_MODELS_URL = "http://localhost:5001/v1/models"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "google/gemma-2-9b-it:free"
+LMSTUDIO_BASE_URL = "http://localhost:1234/v1"
 
 KEYS_TO_TRANSLATE = frozenset({
     "name", "title", "text", "description", "subtitle", "label", "hover_text", "link_text",

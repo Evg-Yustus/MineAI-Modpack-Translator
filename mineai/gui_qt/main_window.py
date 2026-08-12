@@ -1,4 +1,4 @@
-"""Premium PyQt6 dashboard for MineAI Translator.
+﻿"""Premium PyQt6 dashboard for MineAI Translator.
 
 This module is an alternate presentation layer for the existing beta runtime.
 TranslationJob, JobState, engines, processors, caches and PackWriter remain the
@@ -46,7 +46,12 @@ from mineai.constants import LANGUAGES, MC_VERSIONS
 from mineai.runtime.job import TranslationJob, TranslationOptions
 from mineai.runtime.state import JobState
 from mineai.gui_qt.bridge import RuntimeSignals
-from mineai.gui_qt.dialogs import MigrationDialog, PromptEditorDialog, SettingsDialog
+from mineai.gui_qt.dialogs import (
+    AnalysisSelectionDialog,
+    MigrationDialog,
+    PromptEditorDialog,
+    SettingsDialog,
+)
 from mineai.gui_qt.i18n import t, translator
 from mineai.gui_qt.i18n_runtime import tr as rt
 from mineai.gui_qt.log_model import LogEntry, LogSegment, entry_from_message, matches_entry, split_translation_message
@@ -112,6 +117,9 @@ class TranslatorQtWindow(QMainWindow):
         self._runtime_ended_at: float | None = None
         self._task_detail = ""
         self._log_entries: list[LogEntry] = []
+        self._analysis_items: dict[str, object] = {}
+        self._analysis_selected: set[str] = set()
+        self._analysis_ready = False
         self._log_file = None
         try:
             self._log_file = LOG_PATH.open("a", encoding="utf-8", buffering=1)
@@ -122,6 +130,7 @@ class TranslatorQtWindow(QMainWindow):
         self.signals.log.connect(self._append_log)
         self.signals.status.connect(self._set_status)
         self.signals.row.connect(self._append_analysis_row)
+        self.signals.analysis_item.connect(self._append_analysis_item)
         self.signals.worker_finished.connect(self._worker_finished)
         self.signals.worker_failed.connect(self._worker_failed)
 
@@ -306,8 +315,14 @@ class TranslatorQtWindow(QMainWindow):
         language_label.setObjectName("FieldLabel")
         self.version_combo = ScrollSafeComboBox()
         self.version_combo.addItems(MC_VERSIONS)
+        self.version_combo.currentTextChanged.connect(
+            lambda value: settings.set("GENERAL", "minecraft_version", value)
+        )
         self.language_combo = ScrollSafeComboBox()
         self.language_combo.addItems(list(LANGUAGES.keys()))
+        self.language_combo.currentTextChanged.connect(
+            lambda value: settings.set("GENERAL", "target_language", value)
+        )
         self.language_combo.currentTextChanged.connect(self._refresh_system_readiness)
         selectors.addWidget(version_label, 0, 0)
         selectors.addWidget(self.version_combo, 1, 0)
@@ -324,7 +339,9 @@ class TranslatorQtWindow(QMainWindow):
         label.setObjectName("FieldLabel")
         label.setFixedWidth(92)
         self.engine_combo = ScrollSafeComboBox()
-        self.engine_combo.addItems(["Google", "DeepL", rt("engine.local"), "OpenRouter"])
+        self.engine_combo.addItems(
+            ["Google", "DeepL", rt("engine.local"), "LM Studio", "OpenRouter"]
+        )
         self.engine_combo.currentTextChanged.connect(self._engine_changed)
         row.addWidget(label)
         row.addWidget(self.engine_combo, 1)
@@ -394,9 +411,14 @@ class TranslatorQtWindow(QMainWindow):
         self.scope_quests = QCheckBox(t("scope.quests"))
         for checkbox in (self.scope_mods, self.scope_books, self.scope_quests):
             checkbox.setChecked(True)
-            checkbox.stateChanged.connect(self._refresh_system_readiness)
+            checkbox.stateChanged.connect(self._scope_changed)
             card.body.addWidget(checkbox)
         return card
+
+    def _scope_changed(self, *_args) -> None:
+        if self._analysis_items:
+            self._clear_analysis_items()
+        self._refresh_system_readiness()
 
     def _build_mode_card(self) -> QWidget:
         card = Card(t("card.mode"))
@@ -502,6 +524,7 @@ class TranslatorQtWindow(QMainWindow):
         layout.setSpacing(12)
         layout.addWidget(self._build_status_card())
         layout.addWidget(self._build_task_card())
+        layout.addWidget(self._build_analysis_card())
         layout.addWidget(self._build_log_card(), 1)
         return content
 
@@ -631,6 +654,24 @@ class TranslatorQtWindow(QMainWindow):
         card.body.addWidget(self.log_view, 1)
         return card
 
+    def _build_analysis_card(self) -> QWidget:
+        card = Card(t("card.analysis_selection"))
+        self.analysis_card = card
+
+        row = QHBoxLayout()
+        self.analysis_summary = QLabel(t("analysis.not_ready"))
+        self.analysis_summary.setObjectName("SelectionSummary")
+        self.analysis_configure_button = QPushButton(t("analysis.configure"))
+        self.analysis_configure_button.clicked.connect(self._open_analysis_selection)
+        row.addWidget(self.analysis_summary, 1)
+        row.addWidget(self.analysis_configure_button)
+        card.body.addLayout(row)
+
+        self._analysis_items = {}
+        self._analysis_selected = set()
+        card.hide()
+        return card
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self, "status_grid") and hasattr(self, "task_metrics_grid"):
@@ -678,14 +719,33 @@ class TranslatorQtWindow(QMainWindow):
 
     def _restore_state_from_config(self) -> None:
         self.folder_edit.setText(settings.get("GENERAL", "mc_dir"))
-        if "1.20.1" in MC_VERSIONS:
-            self.version_combo.setCurrentText("1.20.1")
-        self.language_combo.setCurrentText("Русский")
+        version = settings.get("GENERAL", "minecraft_version")
+        if version not in MC_VERSIONS:
+            version = "1.20.1" if "1.20.1" in MC_VERSIONS else MC_VERSIONS[0]
+        self.version_combo.setCurrentText(version)
+
+        language = settings.get("GENERAL", "target_language")
+        if language not in LANGUAGES:
+            language = "Русский"
+        self.language_combo.setCurrentText(language)
+
+        stored_engine = settings.get("GENERAL", "translation_engine")
         provider = settings.get("AI", "ai_provider") or "local"
-        if provider == "openrouter":
-            self.engine_combo.setCurrentText("OpenRouter")
-        else:
-            self.engine_combo.setCurrentText("Google")
+        if stored_engine == "Google" and provider in {"lmstudio", "openrouter"}:
+            stored_engine = "LM Studio" if provider == "lmstudio" else "OpenRouter"
+        engine_specs = {
+            "Google": ("google", "local"),
+            "DeepL": ("deepl", "local"),
+            "Local AI": ("ai", "local"),
+            "LM Studio": ("ai", "lmstudio"),
+            "OpenRouter": ("ai", "openrouter"),
+        }
+        wanted_spec = engine_specs.get(stored_engine, ("google", "local"))
+        for index in range(self.engine_combo.count()):
+            label = self.engine_combo.itemText(index)
+            if ENGINE_OPTIONS.get(label) == wanted_spec:
+                self.engine_combo.setCurrentIndex(index)
+                break
         self.ai_fallback.setChecked(settings.getboolean("AI", "fallback_google"))
         self._engine_changed(self.engine_combo.currentText())
 
@@ -713,7 +773,19 @@ class TranslatorQtWindow(QMainWindow):
         self.folder_state.style().polish(self.folder_state)
 
     def _engine_changed(self, label: str) -> None:
-        engine, _provider = ENGINE_OPTIONS[label]
+        engine, provider = ENGINE_OPTIONS[label]
+        stored_names = {
+            ("google", "local"): "Google",
+            ("deepl", "local"): "DeepL",
+            ("ai", "local"): "Local AI",
+            ("ai", "lmstudio"): "LM Studio",
+            ("ai", "openrouter"): "OpenRouter",
+        }
+        settings.set(
+            "GENERAL",
+            "translation_engine",
+            stored_names.get((engine, provider), "Google"),
+        )
         self.google_options.setVisible(engine == "google")
         self.ai_options.setVisible(engine == "ai")
         self._refresh_engine_state()
@@ -838,6 +910,11 @@ class TranslatorQtWindow(QMainWindow):
             translate_mods=self.scope_mods.isChecked(),
             translate_books=self.scope_books.isChecked(),
             translate_quests=self.scope_quests.isChecked(),
+            selected_items=(
+                self._selected_analysis_items()
+                if self._analysis_ready
+                else None
+            ),
         )
 
     def _validate_preflight(self, *, translation: bool) -> bool:
@@ -850,6 +927,17 @@ class TranslatorQtWindow(QMainWindow):
             return False
         if not any((self.scope_mods.isChecked(), self.scope_books.isChecked(), self.scope_quests.isChecked())):
             QMessageBox.warning(self, t("dialog.nothing"), t("dialog.nothing_text"))
+            return False
+        if (
+            translation
+            and self._analysis_ready
+            and not self._selected_analysis_items()
+        ):
+            QMessageBox.warning(
+                self,
+                t("dialog.nothing"),
+                t("dialog.analysis_nothing_text"),
+            )
             return False
         if translation:
             ready, status_text = engine_readiness(settings, self.engine_combo.currentText())
@@ -877,11 +965,13 @@ class TranslatorQtWindow(QMainWindow):
             on_log=lambda message, tag="white": self.signals.log.emit(message, tag),
             on_status=lambda text, progress: self.signals.status.emit(text, progress),
             on_row=lambda icon, name, kind, trans_c, en_c, pct: self.signals.row.emit(icon, name, kind, trans_c, en_c, pct),
+            on_analysis_item=lambda item: self.signals.analysis_item.emit(item),
         )
 
     def _start_analysis(self) -> None:
         if not self._validate_preflight(translation=False):
             return
+        self._clear_analysis_items()
         self._start_worker("analysis")
 
     def _start_translation(self) -> None:
@@ -925,11 +1015,15 @@ class TranslatorQtWindow(QMainWindow):
         self._worker.start()
 
     def _worker_failed(self, kind: str, error: str) -> None:
+        if kind == "analysis":
+            self._analysis_ready = False
         label = t("status.error_analysis") if kind == "analysis" else t("status.error_translation")
         self._append_log(f"{label}:\n{error}", "red")
         self._set_status(label, None)
 
-    def _worker_finished(self, _kind: str) -> None:
+    def _worker_finished(self, kind: str) -> None:
+        if kind == "analysis":
+            self._analysis_ready = bool(self._analysis_items)
         if self._runtime_ended_at is None and self.job_state.snapshot().start_time:
             self._runtime_ended_at = time.time()
         self._job = None
@@ -979,6 +1073,7 @@ class TranslatorQtWindow(QMainWindow):
             self.start_button,
             self.output_rp,
             self.output_inplace,
+            self.analysis_configure_button,
         ):
             widget.setEnabled(not locked)
         for button in self.mode_buttons.values():
@@ -1085,6 +1180,57 @@ class TranslatorQtWindow(QMainWindow):
         )
         self._push_log_entry(entry, persist=True)
 
+    def _append_analysis_item(self, analysis_item) -> None:
+        if analysis_item.key not in self._analysis_items and not analysis_item.is_group:
+            self._analysis_selected.add(analysis_item.key)
+        self._analysis_items[analysis_item.key] = analysis_item
+        self._refresh_analysis_summary()
+        self.analysis_card.show()
+
+    def _selected_analysis_items(self) -> frozenset[str]:
+        return frozenset(self._analysis_selected)
+
+    def _set_all_analysis_items(self, checked: bool) -> None:
+        self._analysis_selected = {
+            key
+            for key, item in self._analysis_items.items()
+            if checked and not item.is_group
+        }
+        self._refresh_analysis_summary()
+
+    def _open_analysis_selection(self) -> None:
+        if not self._analysis_items or self._worker and self._worker.is_alive():
+            return
+        dialog = AnalysisSelectionDialog(
+            self._analysis_items.values(),
+            self._analysis_selected,
+            self,
+        )
+        if dialog.exec():
+            self._analysis_selected = set(dialog.selected_keys())
+            self._refresh_analysis_summary()
+
+    def _refresh_analysis_summary(self) -> None:
+        if not hasattr(self, "analysis_summary"):
+            return
+        total = sum(not item.is_group for item in self._analysis_items.values())
+        selected = len(self._analysis_selected)
+        self.analysis_summary.setText(
+            t("analysis.selected_summary", selected=selected, total=total)
+            if total
+            else t("analysis.not_ready")
+        )
+        busy = bool(self._worker and self._worker.is_alive())
+        self.analysis_configure_button.setEnabled(bool(total) and not busy)
+
+    def _clear_analysis_items(self) -> None:
+        self._analysis_items.clear()
+        self._analysis_selected.clear()
+        self._analysis_ready = False
+        self._refresh_analysis_summary()
+        if hasattr(self, "analysis_card"):
+            self.analysis_card.hide()
+
     def _push_log_entry(self, entry: LogEntry, *, persist: bool) -> None:
         self._log_entries.append(entry)
         if len(self._log_entries) > MAX_LOG_ENTRIES:
@@ -1189,6 +1335,9 @@ class TranslatorQtWindow(QMainWindow):
         root = Path(path)
         if not root.is_dir():
             return
+        previous = settings.get("GENERAL", "mc_dir").strip()
+        if previous and Path(previous) != root:
+            self._clear_analysis_items()
         settings.set("GENERAL", "mc_dir", str(root))
         self.folder_edit.setText(str(root))
         self._refresh_folder_state()
@@ -1218,6 +1367,14 @@ class TranslatorQtWindow(QMainWindow):
             "mode": self._mode_value(),
             "resourcepack": self.output_rp.isChecked(),
             "pack_name": self.pack_name.text(),
+            "analysis_ready": self._analysis_ready,
+            "analysis_items": [
+                (
+                    analysis_item,
+                    key in self._analysis_selected,
+                )
+                for key, analysis_item in self._analysis_items.items()
+            ],
         }
 
     def _rebuild_ui_for_locale(self) -> None:
@@ -1255,6 +1412,16 @@ class TranslatorQtWindow(QMainWindow):
         self.output_rp.setChecked(bool(state["resourcepack"]))
         self.output_inplace.setChecked(not bool(state["resourcepack"]))
         self.pack_name.setText(str(state["pack_name"]))
+        restored_selected = set()
+        for analysis_item, checked in state["analysis_items"]:
+            if analysis_item is None:
+                continue
+            self._append_analysis_item(analysis_item)
+            if checked:
+                restored_selected.add(analysis_item.key)
+        self._analysis_selected = restored_selected
+        self._refresh_analysis_summary()
+        self._analysis_ready = bool(state["analysis_ready"])
         self._refresh_folder_state()
         self._refresh_engine_state()
         self._refresh_system_readiness()

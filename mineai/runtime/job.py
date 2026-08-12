@@ -1,8 +1,12 @@
-import threading
+﻿import threading
 import time
 import traceback
 from dataclasses import dataclass
 
+from mineai.analysis_items import (
+    loose_file_scope,
+    target_is_selected,
+)
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
 from mineai.constants import LANGUAGES
@@ -31,11 +35,12 @@ class TranslationOptions:
     google_mode: str
     ai_mode: str
     ai_batch: int
-    ai_provider: str  # local | openrouter
+    ai_provider: str  # local | lmstudio | openrouter
     process_mode: str  # append | skip | force
     translate_mods: bool
     translate_books: bool
     translate_quests: bool
+    selected_items: frozenset[str] | None = None
 
 
 class TranslationJob:
@@ -51,6 +56,7 @@ class TranslationJob:
         on_log,
         on_status,
         on_row,
+        on_analysis_item=None,
     ) -> None:
         self.config = config
         self.cache_std = cache_std
@@ -59,6 +65,7 @@ class TranslationJob:
         self.on_log = on_log
         self.on_status = on_status
         self.on_row = on_row
+        self.on_analysis_item = on_analysis_item or (lambda _item: None)
         self.ai_launcher = AiLauncher(config)
         self._progress_status_lock = threading.Lock()
         self._last_progress_status_at = 0.0
@@ -124,6 +131,7 @@ class TranslationJob:
             translate_books=options.translate_books,
             translate_quests=options.translate_quests,
             on_row=self.on_row,
+            on_item=self.on_analysis_item,
             on_log=self.on_log,
             on_status=lambda text, val: self.on_status(text, val),
         )
@@ -156,14 +164,81 @@ class TranslationJob:
                 if not self.config.get("OPENROUTER", "model").strip():
                     self.on_log("❌ Укажите ID модели OpenRouter в настройках!", "red")
                     return
+            elif options.ai_provider == "lmstudio":
+                if not self.config.get("LMSTUDIO", "base_url").strip():
+                    self.on_log("❌ Укажите адрес LM Studio в настройках!", "red")
+                    return
+                if not self.config.get("LMSTUDIO", "model").strip():
+                    self.on_log("❌ Выберите модель LM Studio в настройках!", "red")
+                    return
             elif not self.config.get("AI", "model_path").strip():
                 self.on_log("❌ Выберите модель .gguf в настройках!", "red")
                 return
 
-        jars = discover_jar_files(options.mc_dir) if (options.translate_mods or options.translate_books) else []
-        loose = discover_loose_lang_files(options.mc_dir) if (options.translate_mods or options.translate_quests) else []
+        discovered_jars = discover_jar_files(options.mc_dir) if (options.translate_mods or options.translate_books) else []
+        jar_work = []
+        for path in discovered_jars:
+            translate_mods = options.translate_mods and target_is_selected(
+                options.selected_items,
+                path,
+                "mods",
+            )
+            translate_books = options.translate_books and target_is_selected(
+                options.selected_items,
+                path,
+                "books",
+            )
+            if translate_mods or translate_books:
+                jar_work.append((path, translate_mods, translate_books))
+        jars = [path for path, _mods, _books in jar_work]
+
+        loose = (
+            discover_loose_lang_files(options.mc_dir)
+            if (
+                options.translate_mods
+                or options.translate_books
+                or options.translate_quests
+            )
+            else []
+        )
+        enabled_loose_scopes = {
+            scope
+            for scope, enabled in (
+                ("mods", options.translate_mods),
+                ("books", options.translate_books),
+                ("quests", options.translate_quests),
+            )
+            if enabled
+        }
+        loose = [
+            path
+            for path in loose
+            if loose_file_scope(path) in enabled_loose_scopes
+        ]
+        if options.selected_items is not None:
+            loose = [
+                path
+                for path in loose
+                if target_is_selected(
+                    options.selected_items,
+                    path,
+                    loose_file_scope(path),
+                )
+            ]
+
         snbt = discover_snbt_files(options.mc_dir) if options.translate_quests else []
         bq_files = discover_bq_files(options.mc_dir) if options.translate_quests else []
+        if options.selected_items is not None:
+            snbt = [
+                path
+                for path in snbt
+                if target_is_selected(options.selected_items, path, "quests")
+            ]
+            bq_files = [
+                path
+                for path in bq_files
+                if target_is_selected(options.selected_items, path, "quests")
+            ]
 
         if not jars and not loose and not snbt and not bq_files:
             self.on_log("❌ Нечего переводить!", "red")
@@ -182,6 +257,7 @@ class TranslationJob:
             translate_books=options.translate_books,
             translate_quests=options.translate_quests,
             smart_glue=self.config.getboolean("GENERAL", "smart_glue"),
+            selected_items=options.selected_items,
         )
         self.state.set_total_strings(estimated_count)
         self.on_log(f"   Найдено: {estimated_count}", "cyan")
@@ -196,18 +272,25 @@ class TranslationJob:
         elif options.engine == "ai" and options.ai_provider == "openrouter":
             model = self.config.get("OPENROUTER", "model")
             self.on_log(f"🌐 OpenRouter: {model}", "cyan")
+        elif options.engine == "ai" and options.ai_provider == "lmstudio":
+            model = self.config.get("LMSTUDIO", "model")
+            self.on_log(f"🖥️ LM Studio: {model}", "cyan")
 
         pack_writer: PackWriter | None = None
         failed = False
         processing_failed = False
         failed_files = 0
+        modified_paths: list[str] = []
+        pack_outputs: tuple[str | None, str | None] = (None, None)
         total_items = len(jars) + len(loose) + len(snbt) + len(bq_files)
         done = 0
 
         def process_file(path: str, file_type: str, action) -> None:
             nonlocal done, failed_files
             try:
-                action()
+                changed_path = action()
+                if isinstance(changed_path, str) and changed_path not in modified_paths:
+                    modified_paths.append(changed_path)
             except Exception:
                 failed_files += 1
                 self.on_log(
@@ -230,8 +313,6 @@ class TranslationJob:
                     options.mc_version,
                     lang["name"],
                 )
-                self.on_log(f"📦 Ресурспак: {pack_writer.rp_zip_path}", "cyan")
-                self.on_log(f"📂 Датапак: {pack_writer.dp_zip_path}", "magenta")
 
             service = TranslationService(
                 options.engine,
@@ -252,7 +333,7 @@ class TranslationJob:
             self.state.begin_progress()
             self.on_log(f"🚀 ЗАПУСК ПЕРЕВОДА ({lang['name']})...\n", "yellow")
 
-            for path in jars:
+            for path, translate_mods, translate_books in jar_work:
                 if not self.state.should_run():
                     break
                 self.state.wait_if_paused()
@@ -266,8 +347,8 @@ class TranslationJob:
                         target_lang=lang,
                         mode=options.process_mode,
                         output_mode=options.output_mode,
-                        translate_mods=options.translate_mods,
-                        translate_books=options.translate_books,
+                        translate_mods=translate_mods,
+                        translate_books=translate_books,
                         pack_writer=pack_writer,
                     ),
                 )
@@ -280,7 +361,11 @@ class TranslationJob:
                     break
                 process_file(
                     path,
-                    "Словари",
+                    (
+                        "Книги"
+                        if loose_file_scope(path) == "books"
+                        else "Словари"
+                    ),
                     lambda path=path: loose_proc.process(
                         path,
                         options.mc_dir,
@@ -304,6 +389,7 @@ class TranslationJob:
                         path,
                         target_lang=lang,
                         mode=options.process_mode,
+                        selected_items=options.selected_items,
                     ),
                 )
 
@@ -344,7 +430,7 @@ class TranslationJob:
                     if processing_failed or not self.state.should_run():
                         pack_writer.abort()
                     else:
-                        pack_writer.close()
+                        pack_outputs = pack_writer.close()
                 except Exception:
                     failed = True
                     self.on_log(
@@ -366,9 +452,30 @@ class TranslationJob:
             self.on_status("Завершено с ошибками", 1.0)
         else:
             self.on_log("\n✅ ПЕРЕВОД УСПЕШНО ЗАВЕРШЕН!", "green")
-            if options.output_mode == "resourcepack":
-                self.on_log("💡 Включите ресурспак и датапак в игре.", "yellow")
             self.on_status("Все задачи выполнены!", 1.0)
+
+        if not failed and self.state.should_run():
+            resourcepack, datapack = pack_outputs
+            if resourcepack or datapack or modified_paths:
+                self.on_log("\n📌 ФАКТИЧЕСКИЕ РЕЗУЛЬТАТЫ:", "white")
+            if resourcepack:
+                self.on_log(f"📦 Ресурспак: {resourcepack}", "cyan")
+                if pack_writer and pack_writer.resourcepack_enabled:
+                    self.on_log(
+                        "✅ Ресурспак добавлен в список активных; "
+                        "примените пакеты ресурсов или перезапустите Minecraft.",
+                        "green",
+                    )
+                else:
+                    self.on_log(
+                        "⚠️ Не удалось автоматически включить ресурспак; "
+                        "активируйте его в настройках Minecraft.",
+                        "yellow",
+                    )
+            if datapack:
+                self.on_log(f"📂 Датапак: {datapack}", "magenta")
+            for changed_path in modified_paths:
+                self.on_log(f"📝 Изменён файл: {changed_path}", "cyan")
 
     def stop(self) -> None:
         self.state.stop()

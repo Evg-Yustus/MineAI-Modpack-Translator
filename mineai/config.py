@@ -1,4 +1,4 @@
-import configparser
+﻿import configparser
 import io
 from mineai.constants import SETTINGS_FILE
 from mineai.io_utils import atomic_write_text
@@ -12,6 +12,9 @@ class ConfigManager:
             "mc_dir": "",
             "theme": "Dark",
             "ui_language": "ru",
+            "minecraft_version": "1.20.1",
+            "target_language": "Русский",
+            "translation_engine": "Google",
             "color": "blue",
             "smart_glue": "True",
             "google_workers": "5",
@@ -33,6 +36,11 @@ class ConfigManager:
             "model": "google/gemma-2-9b-it:free",
             "site_url": "",
             "app_name": "MineAI Translator",
+        },
+        "LMSTUDIO": {
+            "base_url": "http://localhost:1234/v1",
+            "api_key": "",
+            "model": "",
         },
     }
 

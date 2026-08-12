@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 
 from mineai.constants import LOOSE_JSON_SEARCH_DIRS
@@ -8,20 +8,39 @@ def discover_jar_files(mc_dir: str) -> list[str]:
     mods_dir = os.path.join(mc_dir, "mods")
     if not os.path.isdir(mods_dir):
         return []
-    return [os.path.join(mods_dir, f) for f in os.listdir(mods_dir) if f.endswith(".jar")]
+    return [
+        os.path.join(mods_dir, filename)
+        for filename in sorted(os.listdir(mods_dir), key=str.casefold)
+        if filename.casefold().endswith(".jar")
+    ]
 
 
 def discover_loose_lang_files(mc_dir: str) -> list[str]:
-    found: list[str] = []
+    found: set[str] = set()
     for rel in LOOSE_JSON_SEARCH_DIRS:
         base = os.path.join(mc_dir, rel.replace("/", os.sep))
         if not os.path.isdir(base):
             continue
         for root, _, files in os.walk(base):
             for name in files:
-                if name.lower() == "en_us.json":
-                    found.append(os.path.join(root, name))
-    return found
+                root_parts = {
+                    part.casefold() for part in os.path.normpath(root).split(os.sep)
+                }
+                if name.casefold() == "en_us.json" or (
+                    name.casefold().endswith(".json")
+                    and "en_us" in root_parts
+                ):
+                    found.add(os.path.join(root, name))
+
+    config_dir = os.path.join(mc_dir, "config")
+    if os.path.isdir(config_dir):
+        for root, _, files in os.walk(config_dir):
+            if os.path.basename(root).casefold() != "lang":
+                continue
+            for name in files:
+                if name.casefold() == "en_us.json":
+                    found.add(os.path.join(root, name))
+    return sorted(found, key=str.casefold)
 
 
 def discover_snbt_files(mc_dir: str) -> list[str]:

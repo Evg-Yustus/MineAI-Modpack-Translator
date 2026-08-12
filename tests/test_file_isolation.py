@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 from unittest import mock
 
 from mineai.cache import TranslationCache
@@ -89,6 +89,7 @@ class FileIsolationTests(unittest.TestCase):
         writer = mock.Mock()
         writer.rp_zip_path = "/tmp/rp.zip"
         writer.dp_zip_path = "/tmp/dp.zip"
+        writer.close.return_value = (None, None)
 
         with (
             mock.patch("mineai.runtime.job.discover_jar_files", return_value=[]),

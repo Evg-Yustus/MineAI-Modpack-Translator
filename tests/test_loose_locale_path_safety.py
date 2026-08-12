@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import tempfile
 import unittest
@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from mineai.constants import LANGUAGES
+from mineai.analysis_items import loose_file_scope
 from mineai.engines.base import EngineCallbacks
 from mineai.processors.discovery import discover_loose_lang_files
 from mineai.processors.estimator import StringEstimator
@@ -68,7 +69,7 @@ class LooseLocalePathSafetyTests(unittest.TestCase):
                 source, original = _make_source(tmp, filename)
 
                 self.assertIn(str(source), discover_loose_lang_files(tmp))
-                self._processor().process(
+                written_path = self._processor().process(
                     str(source),
                     tmp,
                     target_lang=TARGET_LANG,
@@ -78,6 +79,7 @@ class LooseLocalePathSafetyTests(unittest.TestCase):
                 )
 
                 target = source.with_name("ru_ru.json")
+                self.assertEqual(written_path, str(target))
                 self.assertTrue(source.exists())
                 self.assertEqual(source.read_bytes(), original)
                 self.assertTrue(target.exists())
@@ -173,6 +175,105 @@ class LooseLocalePathSafetyTests(unittest.TestCase):
             target_locale_path(source, "ru_ru.json"),
             "root/en_us.json_backup/assets/example/lang/ru_ru.json",
         )
+
+    def test_discovers_config_namespace_language_dictionary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = (
+                Path(tmp)
+                / "config"
+                / "collapsiblegroups"
+                / "lang"
+                / "en_us.json"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                json.dumps({"collapsible_groups.title": "Groups"}),
+                encoding="utf-8",
+            )
+
+            self.assertIn(str(source), discover_loose_lang_files(tmp))
+
+    def test_config_dictionary_uses_its_namespace_in_resourcepack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = (
+                Path(tmp)
+                / "config"
+                / "collapsiblegroups"
+                / "lang"
+                / "en_us.json"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                json.dumps({"collapsible_groups.title": "Groups"}),
+                encoding="utf-8",
+            )
+            writer = _MemoryPackWriter()
+
+            self._processor().process(
+                str(source),
+                tmp,
+                target_lang=TARGET_LANG,
+                mode="append",
+                output_mode="resourcepack",
+                pack_writer=writer,
+            )
+
+            self.assertIn(
+                "assets/collapsiblegroups/lang/ru_ru.json",
+                writer.writes,
+            )
+
+    def test_discovers_and_processes_nested_locale_book_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = (
+                Path(tmp)
+                / "kubejs"
+                / "assets"
+                / "tconstruct"
+                / "book"
+                / "encyclopedia"
+                / "en_us"
+                / "bonus.json"
+            )
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                json.dumps(
+                    {
+                        "title": "Bonus",
+                        "effects": ["Single use", "Slotless"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            writer = _MemoryPackWriter()
+
+            self.assertIn(str(source), discover_loose_lang_files(tmp))
+            self.assertEqual(loose_file_scope(str(source)), "books")
+            self.assertEqual(
+                StringEstimator(JobState(is_running=True))._estimate_loose(
+                    str(source),
+                    "ru_ru.json",
+                    "force",
+                    TARGET_LANG["regex"],
+                ),
+                3,
+            )
+            self._processor().process(
+                str(source),
+                tmp,
+                target_lang=TARGET_LANG,
+                mode="force",
+                output_mode="resourcepack",
+                pack_writer=writer,
+            )
+
+            target = (
+                "assets/tconstruct/book/encyclopedia/ru_ru/bonus.json"
+            )
+            self.assertIn(target, writer.writes)
+            translated = json.loads(writer.writes[target])
+            self.assertEqual(translated["title"], "Перевод")
+            self.assertEqual(translated["effects"], ["Перевод", "Перевод"])
 
 
 if __name__ == "__main__":

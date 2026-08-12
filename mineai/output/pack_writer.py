@@ -1,9 +1,10 @@
-import json
+﻿import json
 import os
 import re
 import zipfile
 
 from mineai.constants import PACK_FORMATS
+from mineai.io_utils import atomic_write_text
 
 
 class PackWriter:
@@ -22,6 +23,9 @@ class PackWriter:
         self.rp_handle: zipfile.ZipFile | None = None
         self.dp_handle: zipfile.ZipFile | None = None
         self.written: set[str] = set()
+        self.rp_written = False
+        self.dp_written = False
+        self.resourcepack_enabled = False
         fmt = PACK_FORMATS.get(mc_version, PACK_FORMATS["1.21.1"])
 
         rp_dir = os.path.join(mc_dir, "resourcepacks")
@@ -96,6 +100,10 @@ class PackWriter:
         if handle and internal_path not in self.written:
             handle.writestr(internal_path, data)
             self.written.add(internal_path)
+            if internal_path.lower().startswith("data/"):
+                self.dp_written = True
+            else:
+                self.rp_written = True
 
     @staticmethod
     def _validate_zip(path: str | None) -> None:
@@ -139,10 +147,21 @@ class PackWriter:
         self._cleanup_partial_archives()
 
     def close(self) -> tuple[str | None, str | None]:
-        rp, dp = self.rp_zip_path, self.dp_zip_path
         errors = self._close_handles()
+        for path_attribute, has_payload in (
+            ("rp_zip_path", self.rp_written),
+            ("dp_zip_path", self.dp_written),
+        ):
+            path = getattr(self, path_attribute)
+            if not has_payload:
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError as exc:
+                        errors.append(exc)
+                setattr(self, path_attribute, None)
         if not errors:
-            for path in (rp, dp):
+            for path in (self.rp_zip_path, self.dp_zip_path):
                 try:
                     self._validate_zip(path)
                 except Exception as exc:
@@ -151,4 +170,39 @@ class PackWriter:
         if errors:
             self._remove_output_archives()
             raise errors[0]
-        return rp, dp
+        if self.rp_zip_path:
+            self.resourcepack_enabled = self._enable_resource_pack(
+                self.rp_zip_path
+            )
+        return self.rp_zip_path, self.dp_zip_path
+
+    def _enable_resource_pack(self, resourcepack_path: str) -> bool:
+        """Add the generated pack to options.txt after existing lower priorities."""
+        options_path = os.path.join(self.mc_dir, "options.txt")
+        if not os.path.isfile(options_path):
+            return False
+        try:
+            with open(options_path, encoding="utf-8-sig", newline="") as handle:
+                content = handle.read()
+            match = re.search(
+                r"(?m)^resourcePacks:(\[[^\r\n]*\])(?=\r?$)", content
+            )
+            if not match:
+                return False
+            selected = json.loads(match.group(1))
+            if not isinstance(selected, list) or not all(
+                isinstance(value, str) for value in selected
+            ):
+                return False
+            pack_id = f"file/{os.path.basename(resourcepack_path)}"
+            selected = [value for value in selected if value != pack_id]
+            selected.append(pack_id)
+            replacement = "resourcePacks:" + json.dumps(
+                selected, ensure_ascii=False
+            )
+            updated = content[: match.start()] + replacement + content[match.end() :]
+            if updated != content:
+                atomic_write_text(options_path, updated)
+            return True
+        except (OSError, ValueError, TypeError):
+            return False
