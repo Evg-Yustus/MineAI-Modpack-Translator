@@ -131,3 +131,24 @@ def discover_bq_files(mc_dir: str) -> list[str]:
                 result.append(os.path.join(root, name))
                 
     return result
+
+
+def discover_heracles_files(mc_dir: str) -> list[str]:
+    """Return live Heracles quest text inputs in deterministic order."""
+    root = os.path.join(mc_dir, "config", "heracles")
+    if not os.path.isdir(root):
+        return []
+    result: list[str] = []
+    groups = os.path.join(root, "groups.txt")
+    if os.path.isfile(groups):
+        result.append(groups)
+    quests = os.path.join(root, "quests")
+    if os.path.isdir(quests):
+        for current, _, files in os.walk(quests):
+            for name in files:
+                if name.casefold().endswith(".json"):
+                    result.append(os.path.join(current, name))
+    tutorial = os.path.join(root, "tutorial.html")
+    if os.path.isfile(tutorial):
+        result.append(tutorial)
+    return sorted(result, key=lambda path: path.casefold())

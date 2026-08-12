@@ -52,6 +52,12 @@ target_text = result.text
 - `properties-v1`: локализованные `key=value`/`key:value` файлы `.lang`;
 - `xml-text-v1`: текстовые узлы локализованных XML без изменения тегов,
   атрибутов, entities, отступов и переносов.
+- `heracles-quest-v1`: квесты Heracles/Odyssey Quests из
+  `config/heracles/quests`; переводятся только компоненты отображения,
+  описания, безопасные подписи задач/наград и названия групп, а JSON ID,
+  команды, NBT, зависимости, условия и награды остаются неизменными;
+- `heracles-groups-v1` и `heracles-tutorial-v1`: lossless-перевод
+  `groups.txt` и видимого текста `tutorial.html` без изменения HTML-разметки.
 
 Общий `formatkit.tokenizer` распознаёт коды `§`/`&`, Patchouli `$()`, printf,
 placeholders, экранирование и другие неизменяемые игровые фрагменты.

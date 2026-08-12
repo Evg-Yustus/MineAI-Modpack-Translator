@@ -56,6 +56,7 @@ class StringEstimator:
         translate_quests: bool,
         smart_glue: bool,
         selected_items: frozenset[str] | None = None,
+        heracles_files: list[str] | None = None,
     ) -> int:
         total = 0
         target_file = f"{target_lang['file']}.json"
@@ -118,6 +119,16 @@ class StringEstimator:
                     path,
                     mode,
                     target_regex,
+                    target_lang,
+                )
+
+            for path in heracles_files or []:
+                if not self.state.should_run():
+                    return total
+                self.state.wait_if_paused()
+                total += self._estimate_heracles(
+                    path,
+                    mode,
                     target_lang,
                 )
 
@@ -616,3 +627,45 @@ class StringEstimator:
         ):
             return 0
         return len(selection.pending)
+
+    def _estimate_heracles(
+        self,
+        path: str,
+        mode: str,
+        target_lang: dict,
+    ) -> int:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                current_text = handle.read()
+            current = self.format_registry.plan(
+                path,
+                current_text,
+                target_lang["file"],
+                target_path_hint=path,
+            )
+            source = current
+            backup = path + ".bak"
+            if os.path.exists(backup):
+                with open(backup, encoding="utf-8-sig") as handle:
+                    source_text = handle.read()
+                source = self.format_registry.plan(
+                    path,
+                    source_text,
+                    target_lang["file"],
+                    target_path_hint=path,
+                )
+            if mode == "force":
+                pending = {unit.id for unit in source.units}
+            else:
+                _active, pending = source.merge_existing(
+                    current,
+                    target_lang["regex"],
+                )
+        except (OSError, ValueError, FormatValidationError):
+            return 0
+        if mode == "skip" and skip_threshold_reached(
+            len(source.units),
+            len(pending),
+        ):
+            return 0
+        return len(pending)

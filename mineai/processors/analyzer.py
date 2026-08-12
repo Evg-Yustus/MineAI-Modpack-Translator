@@ -13,6 +13,7 @@ from mineai.json_utils import load_lenient_json
 from mineai.language_validation import uses_same_latin_script
 from mineai.mod_names import get_mod_name
 from mineai.processors.discovery import (
+    discover_heracles_files,
     discover_jar_files,
     discover_loose_lang_files,
 )
@@ -187,6 +188,25 @@ class ModpackAnalyzer:
             en, tr = self._analyze_bq(
                 path,
                 target_regex,
+                on_row,
+                on_item,
+            )
+            total_en += en
+            total_tr += tr
+        heracles_files = (
+            discover_heracles_files(mc_dir) if translate_quests else []
+        )
+        for index, path in enumerate(heracles_files):
+            if not self.state.should_run():
+                break
+            self.state.wait_if_paused()
+            on_status(
+                f"Анализ: Heracles {os.path.basename(path)}...",
+                index / max(len(heracles_files), 1),
+            )
+            en, tr = self._analyze_heracles(
+                path,
+                target_lang,
                 on_row,
                 on_item,
             )
@@ -788,3 +808,50 @@ class ModpackAnalyzer:
             )
             
         return en_c, tr_c
+
+    def _analyze_heracles(
+        self,
+        path: str,
+        target_lang: dict,
+        on_row,
+        on_item=None,
+    ) -> tuple[int, int]:
+        try:
+            with open(path, encoding="utf-8-sig") as handle:
+                text = handle.read()
+            plan = self.format_registry.plan(
+                path,
+                text,
+                target_lang["file"],
+                target_path_hint=path,
+            )
+        except (OSError, ValueError, FormatValidationError):
+            return 0, 0
+        total = len(plan.units)
+        translated = sum(
+            1
+            for unit in plan.units
+            if already_translated(unit.payload, target_lang["regex"])
+        )
+        if total:
+            normalized = path.replace("\\", "/")
+            marker = "/config/heracles/"
+            marker_index = normalized.casefold().find(marker)
+            name = (
+                "Heracles/" + normalized[marker_index + len(marker) :]
+                if marker_index >= 0
+                else os.path.basename(path)
+            )
+            self._emit_result(
+                on_row,
+                on_item,
+                path=path,
+                scope="quests",
+                icon="🏛️",
+                name=name,
+                kind="Heracles / Odyssey",
+                translated=translated,
+                total=total,
+                percent=int(translated / total * 100),
+            )
+        return total, translated

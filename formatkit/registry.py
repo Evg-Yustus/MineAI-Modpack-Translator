@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from formatkit.adapters.base import FormatAdapter
 from formatkit.adapters.guideme import GuideMeAdapter
+from formatkit.adapters.heracles import (
+    HeraclesGroupsAdapter,
+    HeraclesQuestAdapter,
+    HeraclesTutorialAdapter,
+)
 from formatkit.adapters.ie_manual import ImmersiveEngineeringManualAdapter
 from formatkit.adapters.markdown import MarkdownAdapter
 from formatkit.adapters.properties import PropertiesAdapter
@@ -19,6 +24,9 @@ class FormatRegistry:
     def default(cls) -> "FormatRegistry":
         return cls(
             (
+                HeraclesQuestAdapter(),
+                HeraclesGroupsAdapter(),
+                HeraclesTutorialAdapter(),
                 ImmersiveEngineeringManualAdapter(),
                 GuideMeAdapter(),
                 PropertiesAdapter(),

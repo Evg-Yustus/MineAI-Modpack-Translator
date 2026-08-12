@@ -14,10 +14,17 @@ from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
 from mineai.output.pack_writer import PackWriter
 from mineai.processors.analyzer import ModpackAnalyzer
-from mineai.processors.discovery import discover_jar_files, discover_loose_lang_files, discover_snbt_files, discover_bq_files
+from mineai.processors.discovery import (
+    discover_bq_files,
+    discover_heracles_files,
+    discover_jar_files,
+    discover_loose_lang_files,
+    discover_snbt_files,
+)
 from mineai.processors.estimator import StringEstimator
 from mineai.processors.jar import JarProcessor
 from mineai.processors.bq_json import BQProcessor
+from mineai.processors.heracles import HeraclesProcessor
 from mineai.processors.loose_json import LooseJsonProcessor
 from mineai.processors.snbt import SnbtProcessor
 from mineai.runtime.ai_launcher import AiLauncher
@@ -228,6 +235,11 @@ class TranslationJob:
 
         snbt = discover_snbt_files(options.mc_dir) if options.translate_quests else []
         bq_files = discover_bq_files(options.mc_dir) if options.translate_quests else []
+        heracles_files = (
+            discover_heracles_files(options.mc_dir)
+            if options.translate_quests
+            else []
+        )
         if options.selected_items is not None:
             snbt = [
                 path
@@ -239,8 +251,19 @@ class TranslationJob:
                 for path in bq_files
                 if target_is_selected(options.selected_items, path, "quests")
             ]
+            heracles_files = [
+                path
+                for path in heracles_files
+                if target_is_selected(options.selected_items, path, "quests")
+            ]
 
-        if not jars and not loose and not snbt and not bq_files:
+        if (
+            not jars
+            and not loose
+            and not snbt
+            and not bq_files
+            and not heracles_files
+        ):
             self.on_log("❌ Нечего переводить!", "red")
             return
 
@@ -258,6 +281,7 @@ class TranslationJob:
             translate_quests=options.translate_quests,
             smart_glue=self.config.getboolean("GENERAL", "smart_glue"),
             selected_items=options.selected_items,
+            heracles_files=heracles_files,
         )
         self.state.set_total_strings(estimated_count)
         self.on_log(f"   Найдено: {estimated_count}", "cyan")
@@ -282,7 +306,13 @@ class TranslationJob:
         failed_files = 0
         modified_paths: list[str] = []
         pack_outputs: tuple[str | None, str | None] = (None, None)
-        total_items = len(jars) + len(loose) + len(snbt) + len(bq_files)
+        total_items = (
+            len(jars)
+            + len(loose)
+            + len(snbt)
+            + len(bq_files)
+            + len(heracles_files)
+        )
         done = 0
 
         def process_file(path: str, file_type: str, action) -> None:
@@ -328,6 +358,7 @@ class TranslationJob:
             loose_proc = LooseJsonProcessor(service, self.state, callbacks)
             snbt_proc = SnbtProcessor(service, self.state, callbacks)
             bq_proc = BQProcessor(service, self.state, callbacks)
+            heracles_proc = HeraclesProcessor(service, self.state, callbacks)
 
             self._reset_progress_status_throttle()
             self.state.begin_progress()
@@ -403,6 +434,22 @@ class TranslationJob:
                     path,
                     "BQ",
                     lambda path=path: bq_proc.process(
+                        path,
+                        target_lang=lang,
+                        mode=options.process_mode,
+                    ),
+                )
+
+            for path in heracles_files:
+                if not self.state.should_run():
+                    break
+                self.state.wait_if_paused()
+                if not self.state.should_run():
+                    break
+                process_file(
+                    path,
+                    "Heracles",
+                    lambda path=path: heracles_proc.process(
                         path,
                         target_lang=lang,
                         mode=options.process_mode,

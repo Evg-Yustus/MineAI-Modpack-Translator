@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Mapping
+import json
 import re
 
 
@@ -78,6 +79,7 @@ class TranslationUnit:
     context: str
     anchors: tuple[ProtectedAnchor, ...] = ()
     kind: str = "text"
+    encoding: str = "plain"
 
     @property
     def anchor_tokens(self) -> tuple[str, ...]:
@@ -160,6 +162,12 @@ class TranslationPlan:
             replacement = candidate
             for anchor in unit.anchors:
                 replacement = replacement.replace(anchor.token, anchor.source, 1)
+            if unit.encoding == "json-string":
+                replacement = json.dumps(replacement, ensure_ascii=False)
+            elif unit.encoding != "plain":
+                raise FormatValidationError(
+                    f"Unknown translation unit encoding: {unit.encoding}"
+                )
             output = output[: unit.start] + replacement + output[unit.end :]
 
         report = self.validator(self.source_text, output)
@@ -258,6 +266,7 @@ class TranslationPlan:
                     context=source_unit.context,
                     anchors=tuple(anchors),
                     kind=source_unit.kind,
+                    encoding=source_unit.encoding,
                 )
             )
 
