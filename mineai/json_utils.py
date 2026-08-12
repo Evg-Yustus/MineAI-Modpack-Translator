@@ -9,7 +9,8 @@ from mineai.formats.document import DocumentPath
 _TRANSLATABLE_KEY_TOKEN = re.compile(
     r"^(?:"
     r"names?|titles?\d*|texts?\d*|descriptions?|subtexts?|subtitles?|"
-    r"labels?|headers?|headings?|tooltips?|effects?|property|properties"
+    r"labels?|headers?|headings?|tooltips?|effects?|property|properties|"
+    r"translations?"
     r")$",
     re.IGNORECASE,
 )

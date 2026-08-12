@@ -9,6 +9,29 @@ from mineai.processors.book_paths import (
     localized_json_target_path,
     minecraft_lang_json_target_path,
 )
+from mineai.processors.loose_paths import is_loose_book_source
+
+
+def _is_loose_locale_source(root: str, name: str) -> bool:
+    path = os.path.join(root, name)
+    lower_name = name.casefold()
+    normalized = path.replace("\\", "/").casefold()
+    if is_loose_book_source(path):
+        return True
+    if lower_name not in {"en_us.json", "en_us.lang"}:
+        return False
+    return (
+        (
+            lower_name == "en_us.json"
+            and "/assets/" in normalized
+        )
+        or (
+            lower_name == "en_us.json"
+            and "/data/" in normalized
+            and "/patchouli_books/" in normalized
+        )
+        or os.path.basename(root).casefold() in {"lang", "langs"}
+    )
 
 
 def _has_translatable_archive_source(path: str) -> bool:
@@ -56,22 +79,7 @@ def discover_loose_lang_files(mc_dir: str) -> list[str]:
             continue
         for root, _, files in os.walk(base):
             for name in files:
-                root_parts = {
-                    part.casefold() for part in os.path.normpath(root).split(os.sep)
-                }
-                if name.casefold() == "en_us.json" or (
-                    name.casefold().endswith(".json")
-                    and "en_us" in root_parts
-                ):
-                    found.add(os.path.join(root, name))
-
-    config_dir = os.path.join(mc_dir, "config")
-    if os.path.isdir(config_dir):
-        for root, _, files in os.walk(config_dir):
-            if os.path.basename(root).casefold() != "lang":
-                continue
-            for name in files:
-                if name.casefold() == "en_us.json":
+                if _is_loose_locale_source(root, name):
                     found.add(os.path.join(root, name))
     return sorted(found, key=str.casefold)
 

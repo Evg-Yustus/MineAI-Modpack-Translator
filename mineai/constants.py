@@ -17,10 +17,12 @@ MD_PATH_MARKERS = ("/en_us/", "/ae2guide/", "/guide/", "/manual/", "/lexicon/")
 RESEARCH_PATH_MARKERS = ("/research/", "/researches/", "/quests/")
 
 LOOSE_JSON_SEARCH_DIRS = (
-    "kubejs/assets",
+    "kubejs",
     "defaultconfigs",
-    "config/ftbquests/lang",
+    "config",
     "resourcepacks",
+    "packmenu",
+    "patchouli_books",
 )
 
 IGNORE_TERMS = [

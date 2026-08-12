@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from mineai.processors.loose_paths import is_loose_book_source
+
 
 @dataclass(frozen=True)
 class AnalysisItem:
@@ -101,6 +103,6 @@ def selected_segments_for_target(
 
 def loose_file_scope(path: str) -> str:
     normalized = os.path.abspath(path).replace("\\", "/").casefold()
-    if "/en_us/" in normalized and normalized.endswith(".json"):
+    if is_loose_book_source(path):
         return "books"
     return "quests" if "/config/ftbquests/" in normalized else "mods"

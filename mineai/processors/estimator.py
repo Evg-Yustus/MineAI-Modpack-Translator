@@ -23,6 +23,7 @@ from mineai.processors.selection import (
     collect_book_json_selection,
     skip_threshold_reached,
 )
+from mineai.processors.loose_paths import loose_target_disk_path
 from mineai.processors.quest_groups import collect_quest_groups
 from mineai.processors.snbt import (
     get_snbt_target_path,
@@ -419,25 +420,47 @@ class StringEstimator:
         mode,
         target_regex,
     ) -> int:
+        target_code = target_file.removesuffix(".json")
+        if not path.casefold().endswith(".json"):
+            try:
+                with open(path, encoding="utf-8-sig") as source_file:
+                    source_text = source_file.read()
+                target_path = loose_target_disk_path(path, target_code)
+                plan = self.format_registry.plan(
+                    path,
+                    source_text,
+                    target_code,
+                    target_path_hint=target_path,
+                )
+                pending = {unit.id for unit in plan.units}
+                if mode != "force" and os.path.exists(target_path):
+                    with open(target_path, encoding="utf-8-sig") as target_handle:
+                        target_text = target_handle.read()
+                    target_plan = self.format_registry.plan(
+                        target_path,
+                        target_text,
+                        target_code,
+                        target_path_hint=target_path,
+                    )
+                    _merged, pending = plan.merge_existing(
+                        target_plan,
+                        target_regex,
+                    )
+            except (OSError, ValueError, FormatValidationError):
+                return 0
+            if mode == "skip" and skip_threshold_reached(
+                len(plan.units),
+                len(pending),
+            ):
+                return 0
+            return len(pending)
+
         try:
             with open(path, encoding="utf-8") as source_file:
                 source_data = load_lenient_json(
                     source_file.read().encode("utf-8")
                 )
-            if loose_file_scope(path) == "books":
-                target_path = re.sub(
-                    r"(?i)(?<=[\\/])en_us(?=[\\/])",
-                    target_file.removesuffix(".json"),
-                    path,
-                    count=1,
-                )
-            else:
-                target_path = re.sub(
-                    r"en_us\.json$",
-                    target_file,
-                    path,
-                    flags=re.IGNORECASE,
-                )
+            target_path = loose_target_disk_path(path, target_code)
             target_data = {}
             if os.path.exists(target_path):
                 with open(target_path, encoding="utf-8") as target_handle:

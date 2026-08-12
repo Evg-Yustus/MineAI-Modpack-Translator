@@ -26,7 +26,7 @@ from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
     count_translatable_lang_entries,
 )
-from mineai.processors.locale_paths import target_locale_path
+from mineai.processors.loose_paths import loose_target_disk_path
 from mineai.processors.selection import (
     collect_book_json_selection,
 )
@@ -508,21 +508,24 @@ class ModpackAnalyzer:
         on_row,
         on_item=None,
     ):
+        if not path.casefold().endswith(".json"):
+            return self._analyze_loose_document(
+                path,
+                mc_dir,
+                target_file,
+                target_regex,
+                on_row,
+                on_item,
+            )
         try:
             with open(path, encoding="utf-8") as source_file:
                 source = load_lenient_json(
                     source_file.read().encode("utf-8")
                 )
             scope = loose_file_scope(path)
-            target_path = (
-                re.sub(
-                    r"(?i)(?<=[\\/])en_us(?=[\\/])",
-                    target_file.removesuffix(".json"),
-                    path,
-                    count=1,
-                )
-                if scope == "books"
-                else target_locale_path(path, target_file)
+            target_path = loose_target_disk_path(
+                path,
+                target_file.removesuffix(".json"),
             )
             target = {}
             if os.path.exists(target_path):
@@ -571,6 +574,60 @@ class ModpackAnalyzer:
                     else "Квесты" if scope == "quests"
                     else "Интерфейс"
                 ),
+                translated=translated,
+                total=total,
+                percent=int(translated / total * 100),
+            )
+        return total, translated
+
+    def _analyze_loose_document(
+        self,
+        path,
+        mc_dir,
+        target_file,
+        target_regex,
+        on_row,
+        on_item=None,
+    ):
+        target_code = target_file.removesuffix(".json")
+        try:
+            with open(path, encoding="utf-8-sig") as source_handle:
+                source_text = source_handle.read()
+            target_path = loose_target_disk_path(path, target_code)
+            plan = self.format_registry.plan(
+                path,
+                source_text,
+                target_code,
+                target_path_hint=target_path,
+            )
+            pending = {unit.id for unit in plan.units}
+            if os.path.exists(target_path):
+                with open(target_path, encoding="utf-8-sig") as target_handle:
+                    target_text = target_handle.read()
+                target_plan = self.format_registry.plan(
+                    target_path,
+                    target_text,
+                    target_code,
+                    target_path_hint=target_path,
+                )
+                _merged, pending = plan.merge_existing(
+                    target_plan,
+                    target_regex,
+                )
+        except (OSError, ValueError, FormatValidationError):
+            return 0, 0
+
+        total = len(plan.units)
+        translated = max(0, total - len(pending))
+        if total:
+            self._emit_result(
+                on_row,
+                on_item,
+                path=path,
+                scope="books",
+                icon="📚",
+                name=os.path.relpath(path, mc_dir),
+                kind="Книги",
                 translated=translated,
                 total=total,
                 percent=int(translated / total * 100),

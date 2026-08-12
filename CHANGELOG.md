@@ -96,6 +96,22 @@ MineAI Modpack Translator. Исходной точкой была версия `
 - Служебные JSON сторонних приложений, например
   `crash_assistant_localization`, больше не выдаются за Minecraft-lang и не
   расходуют запросы перевода: ресурспак не способен переопределить такой путь.
+- Внешний аудит публичных сборок добавил общий поиск распакованных ресурсов в
+  `config`, `kubejs`, `packmenu`, `resourcepacks`, `defaultconfigs` и
+  `.minecraft/patchouli_books`. MineAI определяет назначение по структурному
+  пути: вложенные `assets` отправляются в ресурспак, вложенные `data` — в
+  датапак, а форматы, которые игра читает непосредственно из `config` или
+  `patchouli_books`, получают соседний каталог `ru_ru` на диске.
+- Поддержаны внешние Patchouli-книги сборки, старые книги из
+  `kubejs/data/<namespace>/patchouli_books`, языковые ресурсы PackMenu и
+  вложенные mod-resource roots вида `config/<mod>/resources/assets`.
+- Markdown-документация Project Intelligence теперь проходит через тот же
+  lossless FormatKit, что и книги внутри JAR. Отдельный JSON-индекс
+  `structure/lang/en_us.json` переводит только поле `translation`; `page_uri`,
+  `page_rev`, порядок массива и остальные метаданные сохраняются.
+- Внешние словари BetterQuesting `config/.../lang/en_us.lang` обрабатываются
+  адаптером `properties-v1` и возвращаются как соседний `ru_ru.lang`, поскольку
+  такой путь не является содержимым обычного ресурспака.
 
 ### Проверка
 
@@ -112,6 +128,12 @@ MineAI Modpack Translator. Исходной точкой была версия `
   Evolution (`82929`), StoneBlock 4 (`54999`) и MC Eternal 2 (`56878`)
   ожидающих строк.
 - Полный набор: 348 тестов успешно.
+- Дополнительный GitHub-корпус охватил ATM 10, Enigmatica 6, Enigmatica 9,
+  GreedyCraft и Supersymmetry: распознаны все `419` найденных английских
+  locale/book-файлов (`0` пропусков по поддерживаемым расширениям), включая
+  `208` Markdown-страниц Project Intelligence, `158` внешних книжных JSON,
+  PackMenu, KubeJS data books и legacy `.lang`. Анализ всех пяти репозиториев
+  завершился без исключений; полный набор после расширения — `355` тестов.
 
 ---
 

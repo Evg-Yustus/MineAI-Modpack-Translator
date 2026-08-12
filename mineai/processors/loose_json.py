@@ -1,6 +1,6 @@
 ﻿import json
 import os
-import re
+from formatkit import FormatRegistry, FormatValidationError
 
 from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
@@ -12,7 +12,11 @@ from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
     count_translatable_lang_entries,
 )
-from mineai.processors.locale_paths import ensure_distinct_paths, target_locale_path
+from mineai.processors.locale_paths import ensure_distinct_paths
+from mineai.processors.loose_paths import (
+    loose_pack_target_path,
+    loose_target_disk_path,
+)
 from mineai.processors.selection import (
     build_book_json_output,
     collect_book_json_selection,
@@ -26,6 +30,7 @@ class LooseJsonProcessor:
         self.service = service
         self.state = state
         self.callbacks = callbacks
+        self.format_registry = FormatRegistry.default()
 
     def process(
         self,
@@ -37,43 +42,23 @@ class LooseJsonProcessor:
         output_mode: str,
         pack_writer: PackWriter | None,
     ) -> str | None:
-        rel = os.path.relpath(file_path, mc_dir).replace("\\", "/")
-        if "assets/" in rel:
-            internal = rel[rel.find("assets/") :]
-        else:
-            parts = rel.split("/")
-            try:
-                lang_index = next(
-                    index
-                    for index, value in enumerate(parts)
-                    if value.casefold() == "lang"
-                    and index + 1 == len(parts) - 1
-                )
-                namespace = parts[lang_index - 1]
-            except (StopIteration, IndexError):
-                namespace = "kubejs"
-            internal = (
-                f"assets/{namespace}/lang/" + os.path.basename(file_path)
+        if not file_path.casefold().endswith(".json"):
+            return self._process_document(
+                file_path,
+                mc_dir,
+                target_lang=target_lang,
+                mode=mode,
+                output_mode=output_mode,
+                pack_writer=pack_writer,
             )
 
-        target_filename = f"{target_lang['file']}.json"
+        tr_internal = loose_pack_target_path(
+            file_path,
+            mc_dir,
+            target_lang["file"],
+        )
+        tr_disk = loose_target_disk_path(file_path, target_lang["file"])
         is_book = loose_file_scope(file_path) == "books"
-        if is_book:
-            tr_internal = re.sub(
-                r"(?i)(?<=/)en_us(?=/)",
-                target_lang["file"],
-                internal,
-                count=1,
-            )
-            tr_disk = re.sub(
-                r"(?i)(?<=[\\/])en_us(?=[\\/])",
-                target_lang["file"],
-                file_path,
-                count=1,
-            )
-        else:
-            tr_internal = target_locale_path(internal, target_filename)
-            tr_disk = target_locale_path(file_path, target_filename)
         ensure_distinct_paths(file_path, tr_disk)
 
         with open(file_path, encoding="utf-8") as f:
@@ -102,7 +87,12 @@ class LooseJsonProcessor:
         label = "Словарь: " + os.path.basename(os.path.dirname(os.path.dirname(file_path)))
 
         if mode == "skip" and skip_threshold_reached(total, len(pending)):
-            if output_mode == "resourcepack" and pack_writer and os.path.exists(tr_disk):
+            if (
+                output_mode == "resourcepack"
+                and pack_writer
+                and tr_internal
+                and os.path.exists(tr_disk)
+            ):
                 with open(tr_disk, "rb") as f:
                     pack_writer.write(tr_internal, f.read())
             return
@@ -139,9 +129,139 @@ class LooseJsonProcessor:
                 merged.update(translated)
 
         payload = json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8")
-        if output_mode == "resourcepack" and pack_writer:
+        if output_mode == "resourcepack" and pack_writer and tr_internal:
             pack_writer.write(tr_internal, payload)
-        elif output_mode == "inplace":
+        else:
             atomic_write_bytes(tr_disk, payload)
             return tr_disk
+        return None
+
+    def _process_document(
+        self,
+        file_path: str,
+        mc_dir: str,
+        *,
+        target_lang: dict,
+        mode: str,
+        output_mode: str,
+        pack_writer: PackWriter | None,
+    ) -> str | None:
+        with open(file_path, encoding="utf-8-sig") as source_handle:
+            source_text = source_handle.read()
+
+        tr_disk = loose_target_disk_path(file_path, target_lang["file"])
+        ensure_distinct_paths(file_path, tr_disk)
+        tr_internal = loose_pack_target_path(
+            file_path,
+            mc_dir,
+            target_lang["file"],
+        )
+        logical_path = os.path.relpath(file_path, mc_dir).replace("\\", "/")
+        target_hint = tr_internal or os.path.relpath(
+            tr_disk,
+            mc_dir,
+        ).replace("\\", "/")
+        plan = self.format_registry.plan(
+            logical_path,
+            source_text,
+            target_lang["file"],
+            target_path_hint=target_hint,
+        )
+
+        active_plan = plan
+        pending_ids = {unit.id for unit in plan.units}
+        if mode != "force" and os.path.exists(tr_disk):
+            try:
+                with open(tr_disk, encoding="utf-8-sig") as target_handle:
+                    target_text = target_handle.read()
+                target_plan = self.format_registry.plan(
+                    target_hint,
+                    target_text,
+                    target_lang["file"],
+                    target_path_hint=target_hint,
+                )
+                active_plan, pending_ids = plan.merge_existing(
+                    target_plan,
+                    target_lang["regex"],
+                )
+            except (OSError, ValueError, FormatValidationError):
+                self.callbacks.on_log(
+                    f"⚠️ Существующий перевод {tr_disk} имеет другую "
+                    "структуру и будет перестроен из английского оригинала",
+                    "yellow",
+                )
+
+        pending = {
+            unit.id: unit.payload
+            for unit in active_plan.units
+            if mode == "force" or unit.id in pending_ids
+        }
+        if mode == "skip" and skip_threshold_reached(
+            len(plan.units),
+            len(pending),
+        ):
+            pending = {}
+
+        cache_contexts = {
+            unit_id: f"{plan.adapter_id}|{logical_path}|{unit_id}"
+            for unit_id in pending
+        }
+        validators = {
+            unit_id: (
+                lambda candidate, current_id=unit_id: self._formatkit_reason(
+                    active_plan,
+                    current_id,
+                    candidate,
+                )
+            )
+            for unit_id in pending
+        }
+        translated: dict[str, str] = {}
+        if pending:
+            self.callbacks.on_log(
+                f"⚡ Перевод {logical_path} — {len(pending)} смысловых блоков",
+                "cyan",
+            )
+            translated = self.service.translate_dict(
+                pending,
+                target_lang,
+                self.callbacks,
+                context=f"{logical_path} | {plan.adapter_id}",
+                prompt_type="books",
+                cache_contexts=cache_contexts,
+                candidate_validators=validators,
+            )
+        if not self.state.should_run():
+            return None
+
+        result, rejected = active_plan.apply_resilient(translated)
+        if rejected:
+            discard = getattr(self.service, "discard_cached_translation", None)
+            units = {unit.id: unit for unit in active_plan.units}
+            for unit_id, reason in rejected.items():
+                if callable(discard):
+                    discard(
+                        target_lang["api"],
+                        units[unit_id].payload,
+                        cache_contexts.get(unit_id, ""),
+                    )
+                self.callbacks.on_log(
+                    f"⚠️ {logical_path}: блок {unit_id} восстановлен из "
+                    f"оригинала: {reason}",
+                    "yellow",
+                )
+
+        payload = result.text.encode("utf-8")
+        if output_mode == "resourcepack" and pack_writer and tr_internal:
+            pack_writer.write(tr_internal, payload)
+            return None
+        atomic_write_bytes(tr_disk, payload)
+        return tr_disk
+
+    @staticmethod
+    def _formatkit_reason(plan, unit_id: str, candidate: str) -> str | None:
+        try:
+            plan.apply({unit_id: candidate})
+        except FormatValidationError as exc:
+            return f"FormatKit: {exc}"
         return None
