@@ -16,7 +16,12 @@ BOOK_PATH_MARKERS = ("patchouli", "lexicon", "guide")
 MD_PATH_MARKERS = ("/en_us/", "/ae2guide/", "/guide/", "/manual/", "/lexicon/")
 RESEARCH_PATH_MARKERS = ("/research/", "/researches/", "/quests/")
 
-LOOSE_JSON_SEARCH_DIRS = ("kubejs/assets", "defaultconfigs", "config/ftbquests/lang")
+LOOSE_JSON_SEARCH_DIRS = (
+    "kubejs/assets",
+    "defaultconfigs",
+    "config/ftbquests/lang",
+    "resourcepacks",
+)
 
 IGNORE_TERMS = [
     "RF", "FE", "EU", "J", "mB", "mB/t", "RF/t", "FE/t", "AE", "kW", "kRF", "mB/tick",

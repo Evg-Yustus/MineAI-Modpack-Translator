@@ -12,9 +12,13 @@ from mineai.analysis_items import (
 from mineai.json_utils import load_lenient_json
 from mineai.language_validation import uses_same_latin_script
 from mineai.mod_names import get_mod_name
-from mineai.processors.discovery import discover_loose_lang_files
+from mineai.processors.discovery import (
+    discover_jar_files,
+    discover_loose_lang_files,
+)
 from mineai.processors.book_paths import (
     MarkdownBookLocator,
+    legacy_lang_target_path,
     localized_json_target_path,
 )
 from mineai.processors.locale_keys import (
@@ -58,14 +62,15 @@ class ModpackAnalyzer:
     ) -> tuple[int, int]:
         target_file = f"{target_lang['file']}.json"
         target_regex = target_lang["regex"]
-        mods_dir = os.path.join(mc_dir, "mods")
         quests_dir = os.path.join(mc_dir, "config", "ftbquests", "quests")
 
         total_en = 0
         total_tr = 0
-        jars: list[str] = []
-        if os.path.isdir(mods_dir) and (translate_mods or translate_books):
-            jars = [os.path.join(mods_dir, f) for f in os.listdir(mods_dir) if f.endswith(".jar")]
+        jars = (
+            discover_jar_files(mc_dir)
+            if translate_mods or translate_books
+            else []
+        )
 
         for index, path in enumerate(jars):
             if not self.state.should_run():
@@ -250,6 +255,7 @@ class ModpackAnalyzer:
                         zin,
                         locale,
                         target_file,
+                        target_regex,
                         mod_name,
                         on_row,
                         path,
@@ -281,6 +287,7 @@ class ModpackAnalyzer:
         zin,
         locale,
         target_file,
+        target_regex,
         mod_name,
         on_row,
         path,
@@ -289,21 +296,63 @@ class ModpackAnalyzer:
         en_c = tr_c = 0
         for item in zin.infolist():
             fl = item.filename.lower()
+            legacy_target = legacy_lang_target_path(
+                item.filename,
+                target_file.removesuffix(".json"),
+            )
+            if legacy_target:
+                try:
+                    source_text = zin.read(item).decode(
+                        "utf-8-sig",
+                        errors="ignore",
+                    )
+                    plan = self.format_registry.plan(
+                        item.filename,
+                        source_text,
+                        target_file.removesuffix(".json"),
+                        target_path_hint=legacy_target,
+                    )
+                    en_c += len(plan.units)
+                    target_key = legacy_target.casefold()
+                    if target_key in locale:
+                        target_text = zin.read(locale[target_key]).decode(
+                            "utf-8-sig",
+                            errors="ignore",
+                        )
+                        target_plan = self.format_registry.plan(
+                            legacy_target,
+                            target_text,
+                            target_file.removesuffix(".json"),
+                            target_path_hint=legacy_target,
+                        )
+                        _merged, pending = plan.merge_existing(
+                            target_plan,
+                            target_regex,
+                        )
+                        tr_c += len(plan.units) - len(pending)
+                except (OSError, ValueError, FormatValidationError):
+                    pass
+                continue
             if not fl.endswith("en_us.json"):
                 continue
             try:
                 en = load_lenient_json(zin.read(item))
-                tr_key = fl.replace("en_us.json", target_file)
-                tr = load_lenient_json(zin.read(locale[tr_key])) if tr_key in locale else {}
-                for key, value in en.items():
-                    if not isinstance(value, str) or not looks_like_source_language(value) or is_technical_term(value):
-                        continue
-                    en_c += 1
-                    existing = str(tr.get(key, ""))
-                    if existing.strip() and existing != value:
-                        tr_c += 1
             except (json.JSONDecodeError, OSError):
                 continue
+            tr_key = fl.replace("en_us.json", target_file)
+            tr = {}
+            if tr_key in locale:
+                try:
+                    tr = load_lenient_json(zin.read(locale[tr_key]))
+                except (json.JSONDecodeError, OSError):
+                    tr = {}
+            for key, value in en.items():
+                if not isinstance(value, str) or not looks_like_source_language(value) or is_technical_term(value):
+                    continue
+                en_c += 1
+                existing = str(tr.get(key, ""))
+                if existing.strip() and existing != value:
+                    tr_c += 1
         if en_c:
             self._emit_result(
                 on_row,

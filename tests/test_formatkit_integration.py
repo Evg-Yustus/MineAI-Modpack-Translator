@@ -118,6 +118,30 @@ class FormatKitJarIntegrationTests(unittest.TestCase):
         self.assertIn("| Настройка | Описание |", output)
         self.assertEqual(source.count("\n"), output.count("\n"))
 
+    def test_legacy_lang_is_translated_as_mod_interface(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        jar_path = Path(temp.name) / "legacy.jar"
+        self._jar(
+            jar_path,
+            {"assets/example/lang/en_US.lang": "example.resources=Resources\n"},
+        )
+        service = _FormatKitService()
+        writer = _Writer()
+
+        JarProcessor(service, _state(), _callbacks()).process(
+            str(jar_path),
+            target_lang=TARGET_LANG,
+            mode="force",
+            output_mode="resourcepack",
+            translate_mods=True,
+            translate_books=False,
+            pack_writer=writer,
+        )
+
+        output = writer.files["assets/example/lang/ru_ru.lang"].decode("utf-8")
+        self.assertEqual(output, "example.resources=Ресурсы\n")
+
     def test_guideme_relocated_document_copies_non_text_dependencies(self) -> None:
         source_path = "assets/ae2/ae2guide/getting-started.md"
         structure_path = (

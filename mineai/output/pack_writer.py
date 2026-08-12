@@ -26,6 +26,7 @@ class PackWriter:
         self.rp_written = False
         self.dp_written = False
         self.resourcepack_enabled = False
+        self._pending_files: dict[str, bytes] = {}
         fmt = PACK_FORMATS.get(mc_version, PACK_FORMATS["1.21.1"])
 
         rp_dir = os.path.join(mc_dir, "resourcepacks")
@@ -95,15 +96,67 @@ class PackWriter:
             return self.dp_handle
         return self.rp_handle
 
+    @staticmethod
+    def _normalize_output_path(internal_path: str) -> str:
+        normalized = internal_path.replace("\\", "/").strip("/")
+        lower_path = normalized.casefold()
+        embedded_assets = lower_path.find("/assets/")
+        if embedded_assets >= 0:
+            return normalized[embedded_assets + 1 :]
+        match = re.fullmatch(
+            r"(?i)(?:data/)?(?P<namespace>[a-z0-9_.-]+)/lang/"
+            r"(?P<locale>[a-z]{2}_[a-z]{2}\.json)",
+            normalized,
+        )
+        if match:
+            return (
+                f"assets/{match.group('namespace')}/lang/"
+                f"{match.group('locale')}"
+            )
+        return normalized
+
     def write(self, internal_path: str, data: bytes) -> None:
+        internal_path = self._normalize_output_path(internal_path)
         handle = self.handle_for_path(internal_path)
-        if handle and internal_path not in self.written:
-            handle.writestr(internal_path, data)
-            self.written.add(internal_path)
-            if internal_path.lower().startswith("data/"):
-                self.dp_written = True
-            else:
-                self.rp_written = True
+        if not handle:
+            return
+        if internal_path in self._pending_files:
+            self._pending_files[internal_path] = self._merge_locale_json(
+                internal_path,
+                self._pending_files[internal_path],
+                data,
+            )
+            return
+        self._pending_files[internal_path] = data
+        self.written.add(internal_path)
+        if internal_path.lower().startswith("data/"):
+            self.dp_written = True
+        else:
+            self.rp_written = True
+
+    @staticmethod
+    def _merge_locale_json(path: str, first: bytes, second: bytes) -> bytes:
+        if not re.search(
+            r"(?i)(?:^|/)lang/[a-z]{2}_[a-z]{2}\.json$",
+            path.replace("\\", "/"),
+        ):
+            return first
+        try:
+            merged = json.loads(first.decode("utf-8-sig"))
+            incoming = json.loads(second.decode("utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return first
+        if not isinstance(merged, dict) or not isinstance(incoming, dict):
+            return first
+        merged.update(incoming)
+        return json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8")
+
+    def _flush_pending_files(self) -> None:
+        for path, payload in self._pending_files.items():
+            handle = self.handle_for_path(path)
+            if handle:
+                handle.writestr(path, payload)
+        self._pending_files.clear()
 
     @staticmethod
     def _validate_zip(path: str | None) -> None:
@@ -139,6 +192,7 @@ class PackWriter:
                     pass
 
     def _cleanup_partial_archives(self) -> None:
+        self._pending_files.clear()
         self._close_handles()
         self._remove_output_archives()
 
@@ -147,7 +201,12 @@ class PackWriter:
         self._cleanup_partial_archives()
 
     def close(self) -> tuple[str | None, str | None]:
-        errors = self._close_handles()
+        errors: list[Exception] = []
+        try:
+            self._flush_pending_files()
+        except Exception as exc:
+            errors.append(exc)
+        errors.extend(self._close_handles())
         for path_attribute, has_payload in (
             ("rp_zip_path", self.rp_written),
             ("dp_zip_path", self.dp_written),

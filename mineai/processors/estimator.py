@@ -11,6 +11,7 @@ from mineai.language_validation import uses_same_latin_script
 from mineai.processors.bq_baseline import resolve_bq_force_baseline
 from mineai.processors.book_paths import (
     MarkdownBookLocator,
+    legacy_lang_target_path,
     localized_json_target_path,
 )
 from mineai.processors.locale_keys import (
@@ -157,12 +158,26 @@ class StringEstimator:
                     ) is not None
                     markdown_target = book_locator.target_path(item.filename)
                     is_book_md = markdown_target is not None
+                    legacy_lang_target = legacy_lang_target_path(
+                        item.filename,
+                        target_lang["file"],
+                    )
                     is_lang = (
                         file_lower.endswith("en_us.json")
                         and not is_book_json
                     )
 
-                    if translate_mods and is_lang:
+                    if translate_mods and legacy_lang_target:
+                        count += self._count_book_md(
+                            archive,
+                            item,
+                            locale,
+                            target_lang,
+                            mode,
+                            smart_glue,
+                            legacy_lang_target,
+                        )
+                    elif translate_mods and is_lang:
                         count += self._count_lang(
                             archive,
                             item,

@@ -99,6 +99,63 @@ class AtomicWriteTests(unittest.TestCase):
 
 
 class PackWriterTests(unittest.TestCase):
+    def test_embedded_and_shorthand_lang_paths_become_resourcepack_assets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = PackWriter(directory, "Paths", "1.21.1", "Russian")
+            writer.write(
+                "packs/tooltips/assets/aether/lang/ru_ru.json",
+                '{"aether.tip": "Подсказка"}'.encode("utf-8"),
+            )
+            writer.write(
+                "data/codechickenlib/lang/ru_ru.json",
+                '{"ccl.info": "Информация"}'.encode("utf-8"),
+            )
+            writer.write(
+                "ae2ct/lang/ru_ru.json",
+                '{"ae2ct.tree": "Дерево"}'.encode("utf-8"),
+            )
+
+            resourcepack, datapack = writer.close()
+
+            self.assertIsNone(datapack)
+            with zipfile.ZipFile(resourcepack) as archive:
+                self.assertIn("assets/aether/lang/ru_ru.json", archive.namelist())
+                self.assertIn(
+                    "assets/codechickenlib/lang/ru_ru.json",
+                    archive.namelist(),
+                )
+                self.assertIn("assets/ae2ct/lang/ru_ru.json", archive.namelist())
+
+    def test_duplicate_locale_outputs_merge_without_losing_unique_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = PackWriter(directory, "Combined", "1.21.1", "Russian")
+            target = "assets/minecraft/lang/ru_ru.json"
+            writer.write(
+                target,
+                json.dumps({"menu.play": "Играть", "shared": "Первый"}).encode(
+                    "utf-8"
+                ),
+            )
+            writer.write(
+                target,
+                json.dumps({"menu.quit": "Выйти", "shared": "Второй"}).encode(
+                    "utf-8"
+                ),
+            )
+
+            resourcepack, _datapack = writer.close()
+
+            with zipfile.ZipFile(resourcepack) as archive:
+                merged = json.loads(archive.read(target))
+            self.assertEqual(
+                merged,
+                {
+                    "menu.play": "Играть",
+                    "shared": "Второй",
+                    "menu.quit": "Выйти",
+                },
+            )
+
     def test_created_resource_pack_is_enabled_with_highest_priority(self):
         with tempfile.TemporaryDirectory() as directory:
             options = os.path.join(directory, "options.txt")

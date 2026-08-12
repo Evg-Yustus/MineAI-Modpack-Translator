@@ -1,18 +1,53 @@
 ﻿import os
 import re
+import zipfile
 
 from mineai.constants import LOOSE_JSON_SEARCH_DIRS
+from mineai.processors.book_paths import (
+    MarkdownBookLocator,
+    legacy_lang_target_path,
+    localized_json_target_path,
+)
+
+
+def _has_translatable_archive_source(path: str) -> bool:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return False
+    locator = MarkdownBookLocator(names, "ru_ru")
+    return any(
+        (
+            name.replace("\\", "/").casefold().startswith("assets/")
+            and name.replace("\\", "/").casefold().endswith("/en_us.json")
+        )
+        or localized_json_target_path(name, "ru_ru") is not None
+        or legacy_lang_target_path(name, "ru_ru") is not None
+        or locator.target_path(name) is not None
+        for name in names
+    )
 
 
 def discover_jar_files(mc_dir: str) -> list[str]:
     mods_dir = os.path.join(mc_dir, "mods")
-    if not os.path.isdir(mods_dir):
-        return []
-    return [
-        os.path.join(mods_dir, filename)
-        for filename in sorted(os.listdir(mods_dir), key=str.casefold)
-        if filename.casefold().endswith(".jar")
-    ]
+    result = []
+    if os.path.isdir(mods_dir):
+        result.extend(
+            os.path.join(mods_dir, filename)
+            for filename in sorted(os.listdir(mods_dir), key=str.casefold)
+            if filename.casefold().endswith(".jar")
+        )
+
+    resourcepacks_dir = os.path.join(mc_dir, "resourcepacks")
+    if os.path.isdir(resourcepacks_dir):
+        for filename in sorted(os.listdir(resourcepacks_dir), key=str.casefold):
+            if not filename.casefold().endswith(".zip"):
+                continue
+            path = os.path.join(resourcepacks_dir, filename)
+            if _has_translatable_archive_source(path):
+                result.append(path)
+    return result
 
 
 def discover_loose_lang_files(mc_dir: str) -> list[str]:

@@ -62,7 +62,10 @@ class PropertiesAdapter:
     def supports(self, logical_path: str, text: str) -> bool:
         del text
         normalized = logical_path.replace("\\", "/").casefold()
-        return normalized.endswith(".lang") and "/en_us/" in normalized
+        return normalized.endswith(".lang") and (
+            "/en_us/" in normalized
+            or normalized.endswith("/en_us.lang")
+        )
 
     def plan(
         self,
@@ -73,7 +76,7 @@ class PropertiesAdapter:
         target_path_hint: str | None = None,
     ) -> TranslationPlan:
         target_path = target_path_hint or re.sub(
-            r"(?i)(?<=/)en_us(?=/)",
+            r"(?i)(?<=/)en_us(?=/|\.lang$)",
             target_locale,
             logical_path.replace("\\", "/"),
             count=1,

@@ -25,6 +25,7 @@ _NON_BOOK_ASSET_DIRECTORIES = frozenset({
 _MARKDOWN_EXTENSIONS = (".md", ".markdown", ".txt")
 _EXPLICIT_LOCALE_EXTENSIONS = (".lang", ".xml")
 _SOURCE_JSON_LOCALE = re.compile(r"/en_us/", re.IGNORECASE)
+_LEGACY_LANG_SOURCE = re.compile(r"(?i)(?<=/)en_us(?=\.lang$)")
 
 
 def _normalized_parts(path: str) -> list[str]:
@@ -53,9 +54,15 @@ def localized_json_target_path(
 ) -> str | None:
     """Map any explicitly localized JSON document without framework names."""
     normalized = source_path.replace("\\", "/").strip("/")
-    if not normalized.casefold().startswith("assets/"):
+    lower_path = normalized.casefold()
+    is_asset_locale = lower_path.startswith("assets/")
+    is_patchouli_datapack = (
+        lower_path.startswith("data/")
+        and "/patchouli_books/" in "/" + lower_path
+    )
+    if not (is_asset_locale or is_patchouli_datapack):
         return None
-    if not normalized.casefold().endswith(".json"):
+    if not lower_path.endswith(".json"):
         return None
     if _SOURCE_JSON_LOCALE.search("/" + normalized) is None:
         return None
@@ -65,6 +72,19 @@ def localized_json_target_path(
         normalized,
         count=1,
     )
+
+
+def legacy_lang_target_path(source_path: str, target_code: str) -> str | None:
+    """Map legacy Forge ``assets/<mod>/lang[s]/en_us.lang`` resources."""
+    normalized = source_path.replace("\\", "/").strip("/")
+    parts = normalized.split("/")
+    if len(parts) < 4 or parts[0].casefold() != "assets":
+        return None
+    if parts[-2].casefold() not in {"lang", "langs"}:
+        return None
+    if _LEGACY_LANG_SOURCE.search("/" + normalized) is None:
+        return None
+    return _LEGACY_LANG_SOURCE.sub(target_code.casefold(), normalized, count=1)
 
 
 class MarkdownBookLocator:
@@ -110,6 +130,13 @@ class MarkdownBookLocator:
             return None
 
         parts = normalized.split("/")
+        if len(parts) >= 4 and parts[0].casefold() == "assets":
+            for index, directory in enumerate(parts[:-1]):
+                if directory.casefold() == "en_us":
+                    target_parts = parts.copy()
+                    target_parts[index] = self.target_code
+                    return "/".join(target_parts)
+
         root_index = _book_root_index(parts)
         if root_index is None:
             return None

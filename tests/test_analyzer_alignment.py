@@ -44,6 +44,67 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
         self.assertEqual(estimated, 0)
         self.assertEqual(rows, [])
 
+    def test_data_pack_patchouli_book_is_counted_by_both(self) -> None:
+        path = self._make_jar({
+            "data/example/patchouli_books/guide/en_us/entries/start.json": (
+                json.dumps({
+                    "name": "Getting Started",
+                    "pages": [{"text": "Welcome to the guide."}],
+                })
+            ),
+        })
+
+        analyzed, estimated, rows = self._counts(path)
+
+        self.assertEqual(analyzed, (2, 0))
+        self.assertEqual(estimated, 2)
+        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 2, 0)])
+
+    def test_explicitly_localized_text_is_counted_outside_book_folders(self) -> None:
+        path = self._make_jar({
+            "assets/example/minigame/en_us/abyss.txt": "Enter the abyss.",
+        })
+
+        analyzed, estimated, rows = self._counts(path)
+
+        self.assertEqual(analyzed, (1, 0))
+        self.assertEqual(estimated, 1)
+        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 1, 0)])
+
+    def test_legacy_lang_file_is_counted_as_mod_interface(self) -> None:
+        path = self._make_jar({
+            "assets/example/lang/en_US.lang": (
+                "example.ready=Ready\n"
+                "example.machine=Machine controls\n"
+            ),
+        })
+        state = JobState()
+        state.start()
+        rows = []
+
+        analyzed = ModpackAnalyzer(state)._analyze_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG["regex"],
+            True,
+            False,
+            lambda *row: rows.append(row),
+            "Example",
+        )
+        estimated = StringEstimator(state)._estimate_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG,
+            "force",
+            True,
+            False,
+            False,
+        )
+
+        self.assertEqual(analyzed, (2, 0))
+        self.assertEqual(estimated, 2)
+        self.assertEqual(rows, [("📦", "Example", "Интерфейс", 0, 2, 0)])
+
     def test_root_markdown_book_without_en_us_is_counted_by_both(self) -> None:
         path = self._make_jar({
             "assets/example/manual/page.md": "Manual page text",
@@ -122,6 +183,39 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (1, 0))
         self.assertEqual(estimated, 1)
+
+    def test_malformed_builtin_locale_matches_append_estimator(self) -> None:
+        path = self._make_jar({
+            "assets/example/lang/en_us.json": json.dumps({
+                "example.ready": "Ready",
+                "example.partial": "Open settings",
+                "example.missing": "Machine controls",
+            }),
+            "assets/example/lang/ru_ru.json": '{"example.ready": "Готово"',
+        })
+        state = JobState()
+        state.start()
+        analyzed = ModpackAnalyzer(state)._analyze_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG["regex"],
+            True,
+            False,
+            lambda *_row: None,
+            "Example",
+        )
+        estimated = StringEstimator(state)._estimate_jar(
+            path,
+            "ru_ru.json",
+            TARGET_LANG,
+            "append",
+            True,
+            False,
+            False,
+        )
+
+        self.assertEqual(analyzed, (3, 0))
+        self.assertEqual(estimated, 3)
 
     def test_book_metadata_is_not_counted_twice_with_mods_enabled(self) -> None:
         path = self._make_jar({

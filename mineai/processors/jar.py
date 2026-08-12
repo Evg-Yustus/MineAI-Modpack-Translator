@@ -20,6 +20,7 @@ from mineai.mod_names import get_mod_name
 from mineai.output.pack_writer import PackWriter
 from mineai.processors.book_paths import (
     MarkdownBookLocator,
+    legacy_lang_target_path,
     localized_json_target_path,
 )
 from mineai.processors.locale_keys import (
@@ -109,6 +110,9 @@ class JarProcessor:
                                 target_file not in fl
                                 and f"/{target_lang['file']}/" not in fl
                                 and f"/_{target_lang['file']}/" not in fl
+                                and not fl.endswith(
+                                    f"/{target_lang['file']}.lang"
+                                )
                             ):
                                 zout.writestr(item, zin.read(item))
 
@@ -118,9 +122,29 @@ class JarProcessor:
                         ) is not None
                         markdown_target = book_locator.target_path(item.filename)
                         is_book_md = markdown_target is not None
+                        legacy_lang_target = legacy_lang_target_path(
+                            item.filename,
+                            target_lang["file"],
+                        )
                         is_lang = fl.endswith("en_us.json") and not is_book_json
 
-                        if translate_mods and is_lang:
+                        if translate_mods and legacy_lang_target:
+                            modified |= self._process_book_md(
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
+                                written_inplace,
+                                legacy_lang_target,
+                                prompt_type="mods",
+                                content_label="Интерфейс LANG",
+                            )
+                        elif translate_mods and is_lang:
                             modified |= self._process_lang_entry(
                                 zin,
                                 zout,
@@ -184,6 +208,9 @@ class JarProcessor:
                                 target_file in fl
                                 or f"/{target_lang['file']}/" in fl
                                 or f"/_{target_lang['file']}/" in fl
+                                or fl.endswith(
+                                    f"/{target_lang['file']}.lang"
+                                )
                             )
                             if is_target and item.filename not in written_inplace:
                                 zout.writestr(item, zin.read(item))
@@ -400,6 +427,7 @@ class JarProcessor:
     def _process_book_md(
         self, zin, zout, item, locale_files, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace, target_path,
+        *, prompt_type="books", content_label="Книга MD",
     ) -> bool:
         try:
             en_text = zin.read(item).decode("utf-8-sig", errors="ignore")
@@ -486,7 +514,7 @@ class JarProcessor:
         }
         if pending:
             self.callbacks.on_log(
-                f"⚡ Перевод {mod_name} [Книга MD] — "
+                f"⚡ Перевод {mod_name} [{content_label}] — "
                 f"{len(pending)} смысловых блоков",
                 "magenta",
             )
@@ -497,7 +525,7 @@ class JarProcessor:
                 context=(
                     f"{mod_name} | {plan.adapter_id} | {item.filename}"
                 ),
-                prompt_type="books",
+                prompt_type=prompt_type,
                 cache_contexts=cache_contexts,
                 candidate_validators=candidate_validators,
             )

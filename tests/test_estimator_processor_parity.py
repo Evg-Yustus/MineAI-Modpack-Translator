@@ -409,6 +409,32 @@ class BookParityTests(unittest.TestCase):
             self.assertEqual(output["name"], "Сохранённый заголовок")
             self.assertEqual(output["text"], "Перевод: New paragraph")
 
+    def test_datapack_patchouli_json_is_written_to_target_locale_path(self) -> None:
+        source_path = "data/demo/patchouli_books/guide/en_us/entries/a.json"
+        target_path = "data/demo/patchouli_books/guide/ru_ru/entries/a.json"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jar_path = Path(temp_dir) / "legacy_patchouli.jar"
+            self._write_jar(
+                jar_path,
+                {source_path: json.dumps({"name": "Getting Started"})},
+            )
+            state = _state()
+            writer = _Writer()
+
+            JarProcessor(_Service(), state, _callbacks()).process(
+                str(jar_path),
+                target_lang=TARGET_LANG,
+                mode="force",
+                output_mode="resourcepack",
+                translate_mods=False,
+                translate_books=True,
+                pack_writer=writer,
+            )
+
+            self.assertIn(target_path, writer.files)
+            output = json.loads(writer.files[target_path])
+            self.assertEqual(output["name"], "Перевод: Getting Started")
+
     def test_book_markdown_append_uses_same_yaml_and_line_rules(self) -> None:
         source_path = "assets/demo/guide/en_us/page.md"
         target_path = "assets/demo/guide/ru_ru/page.md"
