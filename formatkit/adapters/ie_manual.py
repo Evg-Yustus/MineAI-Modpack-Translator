@@ -81,15 +81,19 @@ def _ie_validator(source: str, target: str) -> ValidationReport:
 
 class ImmersiveEngineeringManualAdapter:
     adapter_id = "ie-manual-v1"
-    companion_lang_prefixes = ("manual.immersiveengineering.",)
 
     def supports(self, logical_path: str, text: str) -> bool:
         del text
         normalized = logical_path.replace("\\", "/").lower()
-        return (
-            normalized.startswith("assets/immersiveengineering/manual/")
-            and normalized.endswith(".txt")
-        )
+        return bool(re.match(
+            r"^assets/[a-z0-9_.-]+/manual/(?:_?[a-z]{2}_[a-z]{2}/)?.+\.txt$",
+            normalized,
+        ))
+
+    def companion_prefixes_for(self, logical_path: str) -> tuple[str, ...]:
+        normalized = logical_path.replace("\\", "/")
+        match = re.match(r"(?i)^assets/([^/]+)/manual/", normalized)
+        return (f"manual.{match.group(1)}.",) if match else ()
 
     def plan(
         self,

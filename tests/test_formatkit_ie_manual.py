@@ -1,6 +1,7 @@
 ﻿import unittest
 
 from formatkit import FormatRegistry
+from mineai.language_validation import translation_needs_repair
 
 
 class ImmersiveEngineeringAdapterTests(unittest.TestCase):
@@ -64,7 +65,37 @@ class ImmersiveEngineeringAdapterTests(unittest.TestCase):
             "assets/immersiveengineering/manual/ru_ru/page.txt",
         )
 
+    def test_mixed_translation_with_unchanged_link_label_requires_repair(self) -> None:
+        source = (
+            "This mod explains complex "
+            "<link;large_constructions;multiblock machines> in detail.\n"
+        )
+        plan = self.registry.plan(
+            "assets/engineered_schematics/manual/en_us/es.txt",
+            source,
+            "ru_ru",
+        )
+        unit = plan.units[0]
+        candidate = unit.payload.replace(
+            "This mod explains complex ",
+            "Этот мод подробно описывает сложные ",
+        ).replace(" in detail.", ".")
+
+        target_lang = {
+            "file": "ru_ru",
+            "api": "ru",
+            "regex": r"[А-Яа-яЁё]",
+        }
+        self.assertIsNotNone(plan.candidate_error(
+            unit.id,
+            candidate,
+            lambda original, translated: (
+                "incomplete visible segment"
+                if translation_needs_repair(original, translated, target_lang)
+                else None
+            ),
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
-

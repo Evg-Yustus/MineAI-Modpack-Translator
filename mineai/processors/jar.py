@@ -8,6 +8,7 @@ from formatkit import (
     FormatValidationError,
     relocated_dependencies,
 )
+from formatkit.adapters.modonomicon import is_modonomicon_path
 from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
 from mineai.json_utils import (
@@ -24,6 +25,7 @@ from mineai.processors.book_paths import (
     localized_json_target_path,
     minecraft_lang_json_target_path,
 )
+from mineai.language_validation import translation_needs_repair
 from mineai.processors.locale_keys import (
     collect_lang_keys_to_translate,
     count_translatable_lang_entries,
@@ -59,6 +61,7 @@ class JarProcessor:
         translate_mods: bool,
         translate_books: bool,
         pack_writer: PackWriter | None,
+        book_locator: MarkdownBookLocator | None = None,
     ) -> None:
         if not translate_mods and not translate_books:
             return
@@ -85,9 +88,27 @@ class JarProcessor:
                     item.filename.lower(): item
                     for item in archive_items
                 }
-                book_locator = MarkdownBookLocator(
+                book_locator = book_locator or MarkdownBookLocator(
                     [item.filename for item in archive_items],
                     target_lang["file"],
+                )
+                companion_documents = []
+                if translate_books:
+                    for document_item in archive_items:
+                        if not is_modonomicon_path(document_item.filename):
+                            continue
+                        try:
+                            document_text = zin.read(document_item).decode(
+                                "utf-8-sig",
+                                errors="ignore",
+                            )
+                        except OSError:
+                            continue
+                        companion_documents.append(
+                            (document_item.filename, document_text)
+                        )
+                companion_lang_keys = self.format_registry.companion_lang_keys(
+                    companion_documents
                 )
                 companion_lang_prefixes = (
                     self.format_registry.companion_lang_prefixes(
@@ -123,6 +144,7 @@ class JarProcessor:
                         ) is not None
                         markdown_target = book_locator.target_path(item.filename)
                         is_book_md = markdown_target is not None
+                        is_modonomicon = is_modonomicon_path(item.filename)
                         legacy_lang_target = legacy_lang_target_path(
                             item.filename,
                             target_lang["file"],
@@ -165,7 +187,9 @@ class JarProcessor:
                                 mod_name,
                                 written_inplace,
                             )
-                        elif companion_lang_prefixes and is_lang:
+                        elif (
+                            companion_lang_prefixes or companion_lang_keys
+                        ) and is_lang:
                             modified |= self._process_book_lang_metadata(
                                 zin,
                                 zout,
@@ -177,8 +201,25 @@ class JarProcessor:
                                 output_mode,
                                 pack_writer,
                                 mod_name,
+                            written_inplace,
+                            companion_lang_prefixes,
+                            companion_lang_keys,
+                        )
+                        elif translate_books and is_modonomicon:
+                            modified |= self._process_book_md(
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
                                 written_inplace,
-                                companion_lang_prefixes,
+                                item.filename,
+                                content_label="Книга Modonomicon",
+                                copy_when_empty=False,
                             )
                         elif translate_books and is_book_json:
                             modified |= self._process_book_json(
@@ -435,6 +476,7 @@ class JarProcessor:
         self, zin, zout, item, locale_files, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace, target_path,
         *, prompt_type="books", content_label="Книга MD",
+        copy_when_empty=True,
     ) -> bool:
         try:
             en_text = zin.read(item).decode("utf-8-sig", errors="ignore")
@@ -461,7 +503,7 @@ class JarProcessor:
                 tr_text = ""
 
         if not plan.units:
-            if tr_key in locale_files and mode != "force":
+            if copy_when_empty and tr_key in locale_files and mode != "force":
                 return self._copy_existing(
                     zin,
                     locale_files,
@@ -515,6 +557,7 @@ class JarProcessor:
                     active_plan,
                     current_id,
                     candidate,
+                    target_lang,
                 )
             )
             for unit_id in pending
@@ -625,6 +668,7 @@ class JarProcessor:
     def _process_book_lang_metadata(
         self, zin, zout, item, locale_files, target_file, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace, prefixes,
+        exact_keys=frozenset(),
     ) -> bool:
         tr_path = re.sub(
             r"en_us\.json$",
@@ -643,7 +687,7 @@ class JarProcessor:
             for key, value in en_data.items()
             if isinstance(key, str)
             and isinstance(value, str)
-            and key.startswith(prefixes)
+            and (key.startswith(prefixes) or key in exact_keys)
         }
         if not source:
             return False
@@ -696,12 +740,23 @@ class JarProcessor:
         )
 
     @staticmethod
-    def _formatkit_reason(plan, unit_id: str, candidate: str) -> str | None:
-        try:
-            plan.apply({unit_id: candidate})
-        except FormatValidationError as exc:
-            return f"FormatKit: {exc}"
-        return None
+    def _formatkit_reason(
+        plan,
+        unit_id: str,
+        candidate: str,
+        target_lang: dict,
+    ) -> str | None:
+        def validate_visible(source: str, translated: str) -> str | None:
+            if not re.search(r"[A-Za-z]", source):
+                return None
+            if is_technical_term(source.strip()):
+                return None
+            if translation_needs_repair(source, translated, target_lang):
+                return f"Visible text segment was not fully translated: {source!r}"
+            return None
+
+        reason = plan.candidate_error(unit_id, candidate, validate_visible)
+        return f"FormatKit: {reason}" if reason else None
 
     def _merge_existing_formatkit_plan(
         self,

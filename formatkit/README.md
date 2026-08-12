@@ -1,4 +1,4 @@
-﻿# FormatKit 1.0.0-beta31
+﻿# FormatKit 1.0.0-beta32
 
 FormatKit — независимая встраиваемая библиотека безопасного разбора текстовых
 форматов Minecraft. Она не сканирует `.minecraft`, не открывает JAR/ZIP, не
@@ -58,6 +58,9 @@ target_text = result.text
   команды, NBT, зависимости, условия и награды остаются неизменными;
 - `heracles-groups-v1` и `heracles-tutorial-v1`: lossless-перевод
   `groups.txt` и видимого текста `tutorial.html` без изменения HTML-разметки.
+- `modonomicon-json-v1`: lossless JSON книг Modonomicon, включая Gson-lenient
+  многострочные строки; литеральный текст предназначен для datapack, а
+  связанные lang-ключи возвращаются вызывающему приложению для resource pack.
 
 Общий `formatkit.tokenizer` распознаёт коды `§`/`&`, Patchouli `$()`, printf,
 placeholders, экранирование и другие неизменяемые игровые фрагменты.

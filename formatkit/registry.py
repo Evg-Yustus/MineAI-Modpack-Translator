@@ -10,6 +10,7 @@ from formatkit.adapters.heracles import (
     HeraclesTutorialAdapter,
 )
 from formatkit.adapters.ie_manual import ImmersiveEngineeringManualAdapter
+from formatkit.adapters.modonomicon import ModonomiconAdapter
 from formatkit.adapters.markdown import MarkdownAdapter
 from formatkit.adapters.properties import PropertiesAdapter
 from formatkit.adapters.xml_text import XmlTextAdapter
@@ -27,6 +28,7 @@ class FormatRegistry:
                 HeraclesQuestAdapter(),
                 HeraclesGroupsAdapter(),
                 HeraclesTutorialAdapter(),
+                ModonomiconAdapter(),
                 ImmersiveEngineeringManualAdapter(),
                 GuideMeAdapter(),
                 PropertiesAdapter(),
@@ -65,8 +67,30 @@ class FormatRegistry:
         for logical_path in logical_paths:
             for adapter in self.adapters:
                 if adapter.supports(logical_path, ""):
-                    prefixes.update(
-                        getattr(adapter, "companion_lang_prefixes", ())
-                    )
+                    dynamic = getattr(adapter, "companion_prefixes_for", None)
+                    if callable(dynamic):
+                        prefixes.update(dynamic(logical_path))
+                    else:
+                        prefixes.update(
+                            getattr(adapter, "companion_lang_prefixes", ())
+                        )
                     break
         return tuple(sorted(prefixes))
+
+    def companion_lang_keys(
+        self,
+        documents: list[tuple[str, str]],
+    ) -> set[str]:
+        keys: set[str] = set()
+        for logical_path, text in documents:
+            try:
+                adapter = self.adapter_for(logical_path, text)
+            except ValueError:
+                continue
+            collect = getattr(adapter, "companion_lang_keys", None)
+            if callable(collect):
+                try:
+                    keys.update(collect(text))
+                except ValueError:
+                    continue
+        return keys

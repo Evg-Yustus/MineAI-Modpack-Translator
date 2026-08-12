@@ -102,6 +102,7 @@ class ApplyResult:
 
 
 Validator = Callable[[str, str], ValidationReport]
+VisibleTextValidator = Callable[[str, str], str | None]
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,9 @@ class TranslationPlan:
             replacement = candidate
             for anchor in unit.anchors:
                 replacement = replacement.replace(anchor.token, anchor.source, 1)
-            if unit.encoding == "json-string":
+            if unit.encoding == "json-string-lossless" and unit.id not in translations:
+                replacement = self.source_text[unit.start : unit.end]
+            elif unit.encoding in {"json-string", "json-string-lossless"}:
                 replacement = json.dumps(replacement, ensure_ascii=False)
             elif unit.encoding != "plain":
                 raise FormatValidationError(
@@ -202,6 +205,35 @@ class TranslationPlan:
             else:
                 accepted[unit.id] = translations[unit.id]
         return self.apply(accepted), rejected
+
+    def candidate_error(
+        self,
+        unit_id: str,
+        candidate: str,
+        visible_text_validator: VisibleTextValidator | None = None,
+    ) -> str | None:
+        """Validate immutable syntax and optionally each visible text segment."""
+        unit = next((item for item in self.units if item.id == unit_id), None)
+        if unit is None:
+            return f"Unknown translation unit id: {unit_id}"
+        try:
+            self.apply({unit_id: candidate})
+        except FormatValidationError as exc:
+            return str(exc)
+
+        source_parts = re.split(f"({ANCHOR_PATTERN.pattern})", unit.payload)
+        target_parts = re.split(f"({ANCHOR_PATTERN.pattern})", candidate)
+        if len(source_parts) != len(target_parts):
+            return "Protected segment layout changed"
+        if visible_text_validator is None:
+            return None
+        for source_part, target_part in zip(source_parts, target_parts):
+            if ANCHOR_PATTERN.fullmatch(source_part):
+                continue
+            reason = visible_text_validator(source_part, target_part)
+            if reason:
+                return reason
+        return None
 
     def merge_existing(
         self,

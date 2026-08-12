@@ -2,6 +2,7 @@
 
 from collections import Counter, defaultdict
 import re
+import zipfile
 
 
 _LOCALE_DIRECTORY = re.compile(r"^_?[a-z]{2}_[a-z]{2}$", re.IGNORECASE)
@@ -139,6 +140,22 @@ class MarkdownBookLocator:
                 if code == self.target_code:
                     self._target_styles[root_key].add(style)
                 break
+
+    @classmethod
+    def from_archives(
+        cls,
+        archive_files: list[str],
+        target_code: str,
+    ) -> "MarkdownBookLocator":
+        """Build one locale map for books extended by several mod JARs."""
+        logical_paths: list[str] = []
+        for archive_file in archive_files:
+            try:
+                with zipfile.ZipFile(archive_file, "r") as archive:
+                    logical_paths.extend(archive.namelist())
+            except (OSError, zipfile.BadZipFile):
+                continue
+        return cls(logical_paths, target_code)
 
     def target_path(self, source_path: str) -> str | None:
         normalized = source_path.replace("\\", "/").strip("/")

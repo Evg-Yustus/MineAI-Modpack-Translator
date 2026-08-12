@@ -43,6 +43,8 @@ class _FormatKitService:
             .replace("All blueprints can be used in an", "Все чертежи используются в")
             .replace("to craft items.", "для создания предметов.")
             .replace("Resources", "Ресурсы")
+            .replace("Engineered Schematics", "Инженерные схемы")
+            .replace("multiblock machines", "многоблочные механизмы")
             for key, value in strings.items()
         }
 
@@ -212,6 +214,43 @@ class FormatKitJarIntegrationTests(unittest.TestCase):
             "Ресурсы",
         )
         self.assertNotIn("block.immersiveengineering.test", output)
+
+    def test_ie_addon_manual_translates_link_labels_and_own_metadata(self) -> None:
+        source_path = "assets/engineered_schematics/manual/en_us/es.txt"
+        service, writer = self._process(
+            {
+                source_path: (
+                    "Introduction\nProjecting the Future\n"
+                    "Engineered Schematics explains "
+                    "<link;large_constructions;multiblock machines>.\n"
+                ),
+                "assets/engineered_schematics/lang/en_us.json": json.dumps(
+                    {
+                        "manual.engineered_schematics.main":
+                            "Engineered Schematics",
+                        "item.engineered_schematics.test": "Test Item",
+                    }
+                ),
+            }
+        )
+
+        output = writer.files[
+            "assets/engineered_schematics/manual/ru_ru/es.txt"
+        ].decode("utf-8")
+        self.assertIn(
+            "<link;large_constructions;многоблочные механизмы>",
+            output,
+        )
+        lang = json.loads(
+            writer.files[
+                "assets/engineered_schematics/lang/ru_ru.json"
+            ]
+        )
+        self.assertEqual(
+            lang,
+            {"manual.engineered_schematics.main": "Инженерные схемы"},
+        )
+        self.assertTrue(service.calls)
 
 
 if __name__ == "__main__":

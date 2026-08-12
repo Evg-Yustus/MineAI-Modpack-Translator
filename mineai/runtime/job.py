@@ -23,6 +23,7 @@ from mineai.processors.discovery import (
 )
 from mineai.processors.estimator import StringEstimator
 from mineai.processors.jar import JarProcessor
+from mineai.processors.book_paths import MarkdownBookLocator
 from mineai.processors.bq_json import BQProcessor
 from mineai.processors.heracles import HeraclesProcessor
 from mineai.processors.loose_json import LooseJsonProcessor
@@ -183,6 +184,10 @@ class TranslationJob:
                 return
 
         discovered_jars = discover_jar_files(options.mc_dir) if (options.translate_mods or options.translate_books) else []
+        shared_book_locator = MarkdownBookLocator.from_archives(
+            discovered_jars,
+            lang["file"],
+        )
         jar_work = []
         for path in discovered_jars:
             translate_mods = options.translate_mods and target_is_selected(
@@ -282,6 +287,7 @@ class TranslationJob:
             smart_glue=self.config.getboolean("GENERAL", "smart_glue"),
             selected_items=options.selected_items,
             heracles_files=heracles_files,
+            book_locator=shared_book_locator,
         )
         self.state.set_total_strings(estimated_count)
         self.on_log(f"   Найдено: {estimated_count}", "cyan")
@@ -381,6 +387,7 @@ class TranslationJob:
                         translate_mods=translate_mods,
                         translate_books=translate_books,
                         pack_writer=pack_writer,
+                        book_locator=shared_book_locator,
                     ),
                 )
 

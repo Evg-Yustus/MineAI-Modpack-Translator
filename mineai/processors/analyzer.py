@@ -4,6 +4,7 @@ import re
 import zipfile
 
 from formatkit import FormatRegistry, FormatValidationError
+from formatkit.adapters.modonomicon import is_modonomicon_path
 from mineai.analysis_items import (
     analysis_target_key,
     build_analysis_item,
@@ -73,6 +74,10 @@ class ModpackAnalyzer:
             if translate_mods or translate_books
             else []
         )
+        shared_book_locator = MarkdownBookLocator.from_archives(
+            jars,
+            target_lang["file"],
+        )
 
         for index, path in enumerate(jars):
             if not self.state.should_run():
@@ -89,6 +94,7 @@ class ModpackAnalyzer:
                 on_row,
                 mod_name,
                 on_item,
+                shared_book_locator,
             )
             total_en += en
             total_tr += tr
@@ -257,6 +263,7 @@ class ModpackAnalyzer:
         on_row,
         mod_name,
         on_item=None,
+        book_locator=None,
     ):
         total_en = 0
         total_tr = 0
@@ -267,7 +274,7 @@ class ModpackAnalyzer:
                     i.filename.lower(): i
                     for i in archive_items
                 }
-                book_locator = MarkdownBookLocator(
+                book_locator = book_locator or MarkdownBookLocator(
                     [item.filename for item in archive_items],
                     target_file.removesuffix(".json"),
                 )
@@ -409,6 +416,20 @@ class ModpackAnalyzer:
         companion_prefixes = self.format_registry.companion_lang_prefixes(
             [item.filename for item in zin.infolist()]
         )
+        companion_documents: list[tuple[str, str]] = []
+        for document_item in zin.infolist():
+            if not is_modonomicon_path(document_item.filename):
+                continue
+            try:
+                companion_documents.append((
+                    document_item.filename,
+                    zin.read(document_item).decode("utf-8-sig", errors="ignore"),
+                ))
+            except OSError:
+                continue
+        companion_keys = self.format_registry.companion_lang_keys(
+            companion_documents
+        )
         for item in zin.infolist():
             fl = item.filename.lower()
             is_jb = localized_json_target_path(
@@ -421,9 +442,10 @@ class ModpackAnalyzer:
                 else None
             )
             is_mb = markdown_target is not None
+            is_modonomicon = is_modonomicon_path(item.filename)
             is_companion_lang = (
                 include_companion_lang
-                and companion_prefixes
+                and (companion_prefixes or companion_keys)
                 and fl.endswith("en_us.json")
                 and not is_jb
             )
@@ -441,7 +463,10 @@ class ModpackAnalyzer:
                         for key, value in source_data.items()
                         if isinstance(key, str)
                         and isinstance(value, str)
-                        and key.startswith(companion_prefixes)
+                        and (
+                            key.startswith(companion_prefixes)
+                            or key in companion_keys
+                        )
                     }
                     pending = collect_lang_keys_to_translate(
                         source,
@@ -456,6 +481,21 @@ class ModpackAnalyzer:
                     m_en += len(source)
                     m_tr += len(source) - len(pending)
                 except (json.JSONDecodeError, OSError):
+                    pass
+            elif is_modonomicon:
+                try:
+                    source_text = zin.read(item).decode(
+                        "utf-8-sig",
+                        errors="ignore",
+                    )
+                    plan = self.format_registry.plan(
+                        item.filename,
+                        source_text,
+                        target_file.removesuffix(".json"),
+                        target_path_hint=item.filename,
+                    )
+                    b_en += len(plan.units)
+                except (OSError, ValueError):
                     pass
             elif is_jb:
                 try:

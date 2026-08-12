@@ -4,6 +4,7 @@ import re
 import zipfile
 
 from formatkit import FormatRegistry, FormatValidationError
+from formatkit.adapters.modonomicon import is_modonomicon_path
 from mineai.analysis_items import selected_segments_for_target, target_is_selected
 from mineai.analysis_items import loose_file_scope
 from mineai.json_utils import load_lenient_json
@@ -57,11 +58,16 @@ class StringEstimator:
         smart_glue: bool,
         selected_items: frozenset[str] | None = None,
         heracles_files: list[str] | None = None,
+        book_locator: MarkdownBookLocator | None = None,
     ) -> int:
         total = 0
         target_file = f"{target_lang['file']}.json"
         target_regex = target_lang["regex"]
 
+        book_locator = book_locator or MarkdownBookLocator.from_archives(
+            jar_files,
+            target_lang["file"],
+        )
         for path in jar_files:
             if not self.state.should_run():
                 return total
@@ -84,6 +90,7 @@ class StringEstimator:
                 selected_mods,
                 selected_books,
                 smart_glue,
+                book_locator,
             )
 
         for path in loose_files:
@@ -143,6 +150,7 @@ class StringEstimator:
         translate_mods,
         translate_books,
         smart_glue,
+        book_locator=None,
     ) -> int:
         count = 0
         try:
@@ -152,7 +160,7 @@ class StringEstimator:
                     item.filename.lower(): item
                     for item in archive_items
                 }
-                book_locator = MarkdownBookLocator(
+                book_locator = book_locator or MarkdownBookLocator(
                     [item.filename for item in archive_items],
                     target_lang["file"],
                 )
@@ -163,6 +171,24 @@ class StringEstimator:
                     if translate_books
                     else ()
                 )
+                companion_documents: list[tuple[str, str]] = []
+                if translate_books:
+                    for document_item in archive_items:
+                        if not is_modonomicon_path(document_item.filename):
+                            continue
+                        try:
+                            companion_documents.append((
+                                document_item.filename,
+                                archive.read(document_item).decode(
+                                    "utf-8-sig",
+                                    errors="ignore",
+                                ),
+                            ))
+                        except OSError:
+                            continue
+                companion_lang_keys = self.format_registry.companion_lang_keys(
+                    companion_documents
+                )
                 for item in archive_items:
                     is_book_json = localized_json_target_path(
                         item.filename,
@@ -170,6 +196,7 @@ class StringEstimator:
                     ) is not None
                     markdown_target = book_locator.target_path(item.filename)
                     is_book_md = markdown_target is not None
+                    is_modonomicon = is_modonomicon_path(item.filename)
                     legacy_lang_target = legacy_lang_target_path(
                         item.filename,
                         target_lang["file"],
@@ -201,7 +228,9 @@ class StringEstimator:
                             mode,
                             target_lang["regex"],
                         )
-                    elif companion_lang_prefixes and is_lang:
+                    elif (
+                        companion_lang_prefixes or companion_lang_keys
+                    ) and is_lang:
                         count += self._count_book_lang_metadata(
                             archive,
                             item,
@@ -210,6 +239,14 @@ class StringEstimator:
                             mode,
                             target_lang["regex"],
                             companion_lang_prefixes,
+                            companion_lang_keys,
+                        )
+                    elif translate_books and is_modonomicon:
+                        count += self._count_formatkit_document(
+                            archive,
+                            item,
+                            target_lang,
+                            mode,
                         )
                     elif translate_books and is_book_json:
                         count += self._count_book_json(
@@ -377,6 +414,29 @@ class StringEstimator:
             return 0
         return len(pending)
 
+    def _count_formatkit_document(
+        self,
+        archive,
+        item,
+        target_lang,
+        mode,
+    ) -> int:
+        del mode
+        try:
+            source_text = archive.read(item).decode(
+                "utf-8-sig",
+                errors="ignore",
+            )
+            plan = self.format_registry.plan(
+                item.filename,
+                source_text,
+                target_lang["file"],
+                target_path_hint=item.filename,
+            )
+        except (OSError, ValueError):
+            return 0
+        return len(plan.units)
+
     def _count_book_lang_metadata(
         self,
         archive,
@@ -386,6 +446,7 @@ class StringEstimator:
         mode,
         target_regex,
         prefixes,
+        exact_keys=frozenset(),
     ) -> int:
         try:
             source_data = load_lenient_json(archive.read(item))
@@ -396,7 +457,7 @@ class StringEstimator:
             for key, value in source_data.items()
             if isinstance(key, str)
             and isinstance(value, str)
-            and key.startswith(prefixes)
+            and (key.startswith(prefixes) or key in exact_keys)
         }
         if not source:
             return 0
