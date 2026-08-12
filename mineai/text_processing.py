@@ -343,6 +343,12 @@ def is_technical_term(text: str) -> bool:
     if re.fullmatch(r"\d+(?:[.,]\d+)?x", stripped, re.IGNORECASE):
         return True
 
+    if re.fullmatch(
+        r"(?:⟦FK\d{4}⟧)?[A-Z][a-z]{3,} [a-z]{4,}\]",
+        stripped,
+    ):
+        return True
+
     if re.fullmatch(r"#[A-Za-z0-9_.:/-]+#?", stripped):
         return True
 

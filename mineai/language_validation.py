@@ -52,6 +52,7 @@ _ENGLISH_CLAUSE_WORDS = frozenset({
     "your",
 })
 _LATIN_WORD = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
+_PATCHOULI_TOOLTIP = re.compile(r"\$\(t:([^\r\n)]*)\)", re.IGNORECASE)
 
 
 def requires_target_script_marker(target_lang: dict) -> bool:
@@ -107,8 +108,51 @@ def has_long_untranslated_english_fragment(
 
     for segment in re.split(r"[^\x00-\x7f]+", candidate):
         words = [word.casefold() for word in _LATIN_WORD.findall(segment)]
-        if len(words) < 6:
+        if len(words) < 4:
             continue
-        if sum(word in _ENGLISH_CLAUSE_WORDS for word in words) >= 2:
+        if sum(word in _ENGLISH_CLAUSE_WORDS for word in words) >= 1:
             return True
     return False
+
+
+def has_untranslated_patchouli_tooltip(
+    candidate: str,
+    target_lang: dict,
+) -> bool:
+    """Detect English prose hidden inside a Patchouli tooltip tag."""
+    if not requires_target_script_marker(target_lang):
+        return False
+    target_pattern = target_lang.get("regex")
+    if not target_pattern:
+        return False
+    for tooltip in _PATCHOULI_TOOLTIP.findall(candidate):
+        words = [word.casefold() for word in _LATIN_WORD.findall(tooltip)]
+        if re.search(target_pattern, tooltip) or len(words) < 2:
+            continue
+        common_count = sum(word in _ENGLISH_CLAUSE_WORDS for word in words)
+        if common_count or len(words) >= 4:
+            return True
+    return False
+
+
+def translation_needs_repair(
+    source: str,
+    candidate: str,
+    target_lang: dict,
+) -> bool:
+    """Return True when an existing localized value is empty or incomplete."""
+    if not candidate.strip() or candidate.strip() == source.strip():
+        return True
+    if not requires_target_script_marker(target_lang):
+        return False
+    target_pattern = target_lang.get("regex")
+    if (
+        re.search(r"[A-Za-z]", source)
+        and target_pattern
+        and not re.search(target_pattern, candidate)
+    ):
+        return True
+    return (
+        has_long_untranslated_english_fragment(candidate, target_lang)
+        or has_untranslated_patchouli_tooltip(candidate, target_lang)
+    )

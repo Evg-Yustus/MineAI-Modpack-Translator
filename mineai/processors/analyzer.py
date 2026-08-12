@@ -393,6 +393,11 @@ class ModpackAnalyzer:
                         en,
                         tr,
                         "append",
+                        {
+                            "api": target_file.split("_", 1)[0],
+                            "file": target_file.removesuffix(".json"),
+                            "regex": target_regex,
+                        },
                     )
                     b_en += len(source_map)
                     b_tr += max(0, len(source_map) - len(pending))
@@ -480,6 +485,11 @@ class ModpackAnalyzer:
                 source,
                 target,
                 "append",
+                {
+                    "api": target_file.split("_", 1)[0],
+                    "file": target_file.removesuffix(".json"),
+                    "regex": target_regex,
+                },
             )
             total = len(source_map)
         else:

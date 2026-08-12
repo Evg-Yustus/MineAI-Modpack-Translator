@@ -160,6 +160,53 @@ def _is_russian_article_punctuation_localization(
     return not re.search(r"[A-Za-z0-9]", candidate)
 
 
+def _split_fallback_text(text: str, max_chars: int = 480) -> list[str]:
+    """Split failed prose into exact, reasonably sized sentence chunks."""
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks: list[str] = []
+    cursor = 0
+    minimum = max_chars // 3
+    while len(text) - cursor > max_chars:
+        window = text[cursor : cursor + max_chars + 1]
+        boundaries = list(
+            re.finditer(r"(?<=[.!?;:])\s+|,\s+", window)
+        )
+        usable = [match.end() for match in boundaries if match.end() >= minimum]
+        if usable:
+            cut = usable[-1]
+        else:
+            whitespace = [
+                match.end()
+                for match in re.finditer(r"\s+", window)
+                if match.end() >= minimum
+            ]
+            cut = whitespace[-1] if whitespace else max_chars
+        chunks.append(text[cursor : cursor + cut])
+        cursor += cut
+    chunks.append(text[cursor:])
+    return chunks
+
+
+def _render_validation_error(template, candidate: str) -> str | None:
+    try:
+        template.render_translation(candidate)
+    except FormatValidationError as exc:
+        return f"FormatKit: {exc}"
+    return None
+
+
+def _formatted_candidate_error(template, candidate: str) -> str | None:
+    if any(
+        contains_unsafe_formatting(segment)
+        for segment in ANCHOR_PATTERN.split(candidate)
+        if segment
+    ):
+        return "FormatKit: translated prose introduced formatting syntax"
+    return _render_validation_error(template, candidate)
+
+
 def _validate_candidate(
     item: EngineItem,
     candidate: object,
@@ -684,6 +731,111 @@ class TranslationService:
                 gr = gf.translate_batch(complex_failed, target_lang, callbacks)
                 apply_engine_result(complex_failed, gr, "Google complex fallback")
 
+        segmented_failed = {
+            key: item
+            for key, item in pending.items()
+            if key not in accepted
+            and key in (candidate_validators or {})
+            and (
+                ANCHOR_PATTERN.search(item.original)
+                or len(item.original) > 240
+            )
+        }
+        if segmented_failed and callbacks.should_run():
+            segment_items: dict[str, EngineItem] = {}
+            segment_layouts: dict[str, list[str]] = {}
+            required_segments: dict[str, set[str]] = {}
+            for owner_key, owner_item in segmented_failed.items():
+                anchor_parts = re.split(
+                    f"({ANCHOR_PATTERN.pattern})",
+                    owner_item.original,
+                )
+                parts: list[str] = []
+                for part in anchor_parts:
+                    if ANCHOR_PATTERN.fullmatch(part):
+                        parts.append(part)
+                    else:
+                        parts.extend(_split_fallback_text(part))
+                segment_layouts[owner_key] = parts
+                required_segments[owner_key] = set()
+                for index, part in enumerate(parts):
+                    if not part or ANCHOR_PATTERN.fullmatch(part):
+                        continue
+                    leading = part[: len(part) - len(part.lstrip())]
+                    trailing = part[len(part.rstrip()) :]
+                    end = len(part) - len(trailing) if trailing else len(part)
+                    core = part[len(leading) : end]
+                    if not re.search(r"[A-Za-z]", core) or is_technical_term(core):
+                        continue
+                    masked, mapping = mask_protected_fragments(core)
+                    segment_key = f"{owner_key}::segment::{index}"
+                    segment_items[segment_key] = EngineItem(
+                        key=segment_key,
+                        original=core,
+                        masked=masked,
+                        mapping=mapping,
+                    )
+                    required_segments[owner_key].add(segment_key)
+
+            if segment_items:
+                callbacks.on_log(
+                    "🧩 Детерминированный fallback: "
+                    f"{len(segmented_failed)} блоков / "
+                    f"{len(segment_items)} текстовых сегментов",
+                    "cyan",
+                )
+                segment_engine = (
+                    GoogleEngine(
+                        workers=self.config.getint(
+                            "GENERAL",
+                            "google_workers",
+                            5,
+                        ),
+                        mode="single",
+                    )
+                    if self.engine_name == "google" or (is_ai and use_fallback)
+                    else self._build_engine(
+                        f"{context}\nTranslate each visible text segment.",
+                        prompt_type,
+                    )
+                )
+                segment_result = segment_engine.translate_batch(
+                    segment_items,
+                    target_lang,
+                    callbacks,
+                )
+                valid_segments: dict[str, str] = {}
+                for segment_key, candidate in segment_result.items():
+                    segment_item = segment_items.get(segment_key)
+                    if segment_item is None:
+                        continue
+                    ok, _reason, _identity = _validate_candidate(
+                        segment_item,
+                        candidate,
+                        target_lang,
+                    )
+                    if ok:
+                        valid_segments[segment_key] = candidate
+
+                for owner_key, parts in segment_layouts.items():
+                    if not required_segments[owner_key].issubset(valid_segments):
+                        continue
+                    for segment_key in required_segments[owner_key]:
+                        index = int(segment_key.rsplit("::", 1)[1])
+                        original_part = parts[index]
+                        leading = original_part[
+                            : len(original_part) - len(original_part.lstrip())
+                        ]
+                        trailing = original_part[len(original_part.rstrip()) :]
+                        parts[index] = (
+                            leading + valid_segments[segment_key] + trailing
+                        )
+                    commit(
+                        owner_key,
+                        "".join(parts),
+                        "сегментный fallback",
+                    )
+
         for owner_key, item in pending.items():
             if owner_key in accepted:
                 continue
@@ -736,7 +888,7 @@ class TranslationService:
 
         for key, template in templates.items():
             payload, _anchors = template.translation_payload()
-            visible = ANCHOR_PATTERN.sub("", payload)
+            visible = ANCHOR_PATTERN.sub(" ", payload)
             if not re.search(r"[A-Za-z]", visible):
                 continue
             if is_technical_term(visible):
@@ -759,6 +911,12 @@ class TranslationService:
             context=context,
             prompt_type=prompt_type,
             cache_contexts=cache_contexts,
+            candidate_validators={
+                key: lambda candidate, template=templates[key]: (
+                    _formatted_candidate_error(template, candidate)
+                )
+                for key in flat
+            },
         )
 
         failed_roots: set[str] = set()
@@ -769,8 +927,12 @@ class TranslationService:
                 result[key] = source
                 continue
             candidate = translated.get(key, payload)
-            visible_candidate = ANCHOR_PATTERN.sub("", candidate)
-            if contains_unsafe_formatting(visible_candidate):
+            visible_segments = ANCHOR_PATTERN.split(candidate)
+            if any(
+                contains_unsafe_formatting(segment)
+                for segment in visible_segments
+                if segment
+            ):
                 callbacks.on_log(
                     f"⚠️ Форматирование в текстовом узле {key!r} "
                     "отклонено; исходная разметка сохранена",

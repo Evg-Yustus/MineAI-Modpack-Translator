@@ -14,6 +14,7 @@ from mineai.engines.service import TranslationService
 from mineai.json_utils import apply_translations_by_path, key_to_path, path_to_key
 from mineai.processors.analyzer import ModpackAnalyzer
 from mineai.processors.estimator import StringEstimator
+from mineai.processors.selection import collect_book_json_selection
 from mineai.processors.snbt import SnbtProcessor
 from mineai.runtime.state import JobState
 from mineai.text_processing import is_technical_term
@@ -60,11 +61,44 @@ class _TranslationServiceStub:
 
 
 class StructuredDocumentRegressionTests(unittest.TestCase):
-    def test_release_version_is_beta30(self) -> None:
-        self.assertEqual(__version__, "10.0.0 - BETAv30")
+    def test_release_version_is_beta31(self) -> None:
+        self.assertEqual(__version__, "10.0.0 - BETAv31")
 
     def test_common_structured_document_module_exists(self) -> None:
         self.assertIsNotNone(importlib.util.find_spec("mineai.formats.document"))
+
+    def test_append_repairs_existing_book_page_that_is_still_english(self) -> None:
+        source = {
+            "pages": [
+                {
+                    "text": (
+                        "This machine accepts items and exports the result."
+                    )
+                }
+            ]
+        }
+        existing = {
+            "pages": [
+                {
+                    "text": (
+                        "This machine accepts ingredients and exports results."
+                    )
+                }
+            ]
+        }
+
+        _source, preserved, pending = collect_book_json_selection(
+            source,
+            existing,
+            "append",
+            RUSSIAN,
+        )
+
+        self.assertEqual(
+            pending,
+            {"pages/0/text": source["pages"][0]["text"]},
+        )
+        self.assertNotIn("pages/0/text", preserved)
 
     def test_json_path_round_trip_preserves_slashes_numeric_keys_and_indices(self) -> None:
         path = ("pages/intro", "01", 0, "title")

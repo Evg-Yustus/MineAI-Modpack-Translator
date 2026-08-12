@@ -341,6 +341,7 @@ class JarProcessor:
             en_data,
             tr_data,
             mode,
+            target_lang,
         )
         total_translatable = len(source_map)
         if total_translatable == 0:

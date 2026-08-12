@@ -1,6 +1,6 @@
 ﻿# 🌍 MineAI Translator (The Ultimate Modpack Localizer)
 
-[![Beta30](https://img.shields.io/badge/version-10.0.0--BETAv30-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/tag/v10.0.0-beta30)
+[![Beta31](https://img.shields.io/badge/version-10.0.0--BETAv31-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
 [![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
@@ -27,7 +27,7 @@ The program features a modern Graphical User Interface (GUI). You don't need to 
 You don't need to install Python or mess with code! You can download the ready-to-use application.
 
 1. Go to the [Releases](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases) tab on the right.
-2. Download the latest **`MineAI_Translator_Beta30.exe`** file.
+2. Download the latest **`MineAI_Translator_Beta31.exe`** file.
 3. Place it in a convenient folder and run it with a double click.
 
 *(For advanced users and developers, instructions on running from source code are at the bottom of the page).*
@@ -38,6 +38,8 @@ You don't need to install Python or mess with code! You can download the ready-t
 
 * 🛡️ **Format Protection (Titanium Shield):** Smart regular expressions protect macros `$(#AE)`, tags `<item:minecraft:dirt>`, Markdown links `](url)`, and YAML headers (`---`) from being corrupted by the translator.
 * 🛠️ **Auto-Fix Cache:** Machine translators often make mistakes (e.g., adding spaces in variables: `% s` instead of `%s`). On every run, the program scans its cache and **automatically fixes** broken brackets, links, and variables, ensuring perfect formatting.
+* 🧩 **Deterministic Book Recovery:** If a model loses a protected marker in a large page, MineAI translates only the visible segments and rebuilds the original FormatKit skeleton itself instead of leaving the page in English.
+* 💬 **Patchouli Tooltip Translation:** Visible text inside `$(t:...)` tooltips is translated while the surrounding game syntax remains byte-stable.
 * 📖 **Custom Dictionary (`dictionary.json`):** The program automatically generates a dictionary file. If the translator stubbornly translates "Raw Copper" incorrectly, just add a rule to the dictionary, and the script will automatically replace it throughout the entire modpack!
 * 🧠 **Local AI Support:** Integration with KoboldCPP and LM Studio for translating text while preserving game lore and context.
 * ☁️ **Cloud AI via OpenRouter:** Connect elite neural networks (like Qwen, Claude, or GPT) in one click without using your video card.
@@ -153,11 +155,11 @@ mineai/
 If you modified the code and want to build your own executable without a console window, simply run the provided batch file:
 `build.bat`
 
-The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator.exe`.
+The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta31.exe`.
 
 ### FormatKit SDK
 
-Beta30 includes a filesystem-independent format library for other Minecraft
+Beta31 includes a filesystem-independent format library for other Minecraft
 translation tools. The caller supplies a logical path and decoded text;
 FormatKit returns protected translation units and rebuilds a validated target.
 See [`formatkit/README.md`](formatkit/README.md) for the public API.
@@ -176,6 +178,8 @@ See [`formatkit/README.md`](formatkit/README.md) for the public API.
 
 * 🛡️ **Защита форматирования (Титановый Щит):** Умные регулярные выражения защищают макросы `$(#AE)`, теги `<item:minecraft:dirt>`, ссылки Markdown `](url)` и шапки YAML (`---`) от искажений.
 * 🛠️ **Самолечение кэша (Auto-Fix):** Машинные переводчики часто ошибаются (ставят пробелы в переменных: `% s` вместо `%s`). При каждом запуске программа сканирует свой кэш и **автоматически чинит** сломанные скобки, ссылки и переменные.
+* 🧩 **Детерминированное восстановление книг:** Если модель теряет защищённый маркер большой страницы, MineAI переводит только видимые сегменты и самостоятельно собирает исходный FormatKit-skeleton, не оставляя страницу на английском.
+* 💬 **Перевод Patchouli-tooltip:** Видимый текст внутри `$(t:...)` переводится, а игровая оболочка остаётся неизменной.
 * 📖 **Пользовательский словарь (`dictionary.json`):** Если переводчик упорно переводит "Raw Copper" как "Сыромятная медь", просто добавьте правило в созданный словарь, и скрипт заменит всё на "Сырая медь" во всей сборке!
 * 🧠 **Локальные Нейросети:** Интеграция с KoboldCPP и LM Studio для перевода текста с полным сохранением игрового лора и контекста.
 * ☁️ **Облачный ИИ через OpenRouter:** Подключайте топовые нейросети (Qwen, Claude, GPT) в один клик без нагрузки на собственную видеокарту!
@@ -221,11 +225,11 @@ API-токен нужен только тогда, когда авторизац
 
 Для сборки собственного `.exe` файла без окна консоли используйте готовый батник:
 `build.bat`
-(Результат появится в папке `dist/MineAI_Translator.exe`).
+(Результат появится в папке `dist/MineAI_Translator_Beta31.exe`).
 
 ### SDK FormatKit
 
-В Beta30 безопасный разбор книг вынесен в независимую библиотеку без GUI,
+В Beta31 безопасный разбор книг вынесен в независимую библиотеку без GUI,
 файлового сканера и сетевого переводчика. Публичный контракт и пример
 встраивания описаны в [`formatkit/README.md`](formatkit/README.md).
 

@@ -153,6 +153,23 @@ class CandidateSafetyTests(unittest.TestCase):
         self.assertEqual(reason, "оставлен длинный английский фрагмент")
         self.assertFalse(identity)
 
+    def test_short_english_instruction_inside_russian_text_is_rejected(self) -> None:
+        item = EngineItem(
+            key="tooltip",
+            original="Connect on the right to configure the filter.",
+            masked="Connect on the right to configure the filter.",
+        )
+
+        accepted, reason, identity = _validate_candidate(
+            item,
+            "Настройте фильтр: connect on the right.",
+            {"api": "ru", "regex": r"[А-Яа-яЁё]"},
+        )
+
+        self.assertFalse(accepted)
+        self.assertEqual(reason, "оставлен длинный английский фрагмент")
+        self.assertFalse(identity)
+
     def test_english_product_name_inside_russian_text_is_accepted(self) -> None:
         item = EngineItem(
             key="description",

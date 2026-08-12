@@ -201,6 +201,70 @@ class TranslationServiceRegressionTests(unittest.TestCase):
             "Стол $(item) используется для улучшений.",
         )
 
+    def test_formatted_validation_does_not_join_text_across_anchors(self):
+        source = "The value is zero.$(p)Apotheosis changes the default."
+
+        def translate(items):
+            item = next(iter(items.values()))
+            return {
+                item.key: item.original.replace(
+                    "The value is zero.",
+                    "Значение равно нулю.",
+                ).replace(
+                    "Apotheosis changes the default.",
+                    "Apotheosis изменяет значение по умолчанию.",
+                )
+            }
+
+        result = _Service(
+            _Engine(translate),
+            _MemoryCache(),
+            _Config(),
+        ).translate_formatted_dict(
+            {"page": source},
+            TARGET_LANG,
+            _callbacks([]),
+            context="demo/page.json",
+            prompt_type="books",
+        )
+
+        self.assertEqual(
+            result["page"],
+            "Значение равно нулю.$(p)Apotheosis изменяет значение по умолчанию.",
+        )
+
+    def test_failed_long_formatted_node_is_retried_in_smaller_segments(self):
+        sentence = "This sentence explains the machine clearly. "
+        source = (sentence * 20).rstrip()
+
+        def translate(items):
+            if not all("::segment::" in key for key in items):
+                return {}
+            return {
+                key: item.original.replace(
+                    "This sentence explains the machine clearly.",
+                    "Это предложение понятно объясняет работу машины.",
+                )
+                for key, item in items.items()
+            }
+
+        result = _Service(
+            _Engine(translate),
+            _MemoryCache(),
+            _Config(),
+        ).translate_formatted_dict(
+            {"page": source},
+            TARGET_LANG,
+            _callbacks([]),
+            context="demo/large_page.json",
+            prompt_type="books",
+        )
+
+        self.assertEqual(
+            result["page"],
+            ("Это предложение понятно объясняет работу машины. " * 20).rstrip(),
+        )
+
     def test_formatted_cache_is_scoped_by_page_and_node(self):
         cache = _MemoryCache()
         engine = _Engine(
@@ -563,6 +627,52 @@ class TranslationServiceRegressionTests(unittest.TestCase):
 
         self.assertEqual(result, {"key": "Корректный русский перевод"})
         retry.translate_batch.assert_called_once()
+
+    def test_failed_anchor_block_is_retranslated_by_visible_segments(self):
+        source = "First sentence.⟦FK0000⟧Second sentence."
+        expected = "Первое предложение.⟦FK0000⟧Второе предложение."
+
+        def translate(items):
+            if all("::segment::" in key for key in items):
+                values = {
+                    "First sentence.": "Первое предложение.",
+                    "Second sentence.": "Второе предложение.",
+                }
+                return {
+                    key: values[item.original]
+                    for key, item in items.items()
+                }
+            return {next(iter(items)): "Перевод без структурного якоря"}
+
+        result = _Service(
+            _Engine(translate),
+            _MemoryCache(),
+            _Config(fallback_google=False),
+        ).translate_dict(
+            {"key": source},
+            TARGET_LANG,
+            _callbacks([]),
+            candidate_validators={
+                "key": lambda candidate: (
+                    None if candidate == expected else "FormatKit: структура"
+                )
+            },
+        )
+
+        self.assertEqual(result, {"key": expected})
+
+    def test_scientific_binomial_link_label_is_intentional_identity(self):
+        source = "⟦FK0000⟧Xylocopa aerata]"
+        engine = _Engine(lambda _items: self.fail("engine must be skipped"))
+
+        result = _Service(engine, _MemoryCache(), _Config()).translate_dict(
+            {"key": source},
+            TARGET_LANG,
+            _callbacks([]),
+        )
+
+        self.assertEqual(result, {"key": source})
+        self.assertEqual(engine.calls, [])
 
     def test_russian_candidate_with_cjk_is_rejected(self):
         source = "Villager Egg Drop Chance"

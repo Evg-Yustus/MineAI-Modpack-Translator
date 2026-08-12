@@ -88,6 +88,7 @@ class LooseJsonProcessor:
                 en_data,
                 tr_data,
                 mode,
+                target_lang,
             )
             total = len(source_map)
         else:

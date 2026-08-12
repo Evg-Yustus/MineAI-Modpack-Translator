@@ -24,4 +24,4 @@ __all__ = [
     "ValidationReport",
 ]
 
-__version__ = "1.0.0-beta30"
+__version__ = "1.0.0-beta31"

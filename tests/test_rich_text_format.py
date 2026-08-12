@@ -130,6 +130,8 @@ class RichTextFormatTests(unittest.TestCase):
         self.assertTrue(contains_unsafe_formatting("$(#ED7014)цвет"))
         self.assertTrue(contains_unsafe_formatting('<ItemLink id="x" />'))
         self.assertFalse(contains_unsafe_formatting("Обычный русский текст."))
+        self.assertFalse(contains_unsafe_formatting("После версии 1.20.x"))
+        self.assertFalse(contains_unsafe_formatting("GPS(Область)"))
 
     def test_patchouli_legacy_codes_and_script_identifiers_are_immutable(self):
         source = (
@@ -148,6 +150,22 @@ class RichTextFormatTests(unittest.TestCase):
         self.assertNotIn(".x", payload)
         self.assertIn("call", payload)
         self.assertIn("read position", payload)
+        self.assertEqual(template.render_translation(payload), source)
+
+    def test_patchouli_tooltip_text_is_translatable_but_wrapper_is_immutable(self):
+        source = (
+            "$(ttcolor)$(t:Connect on the right to whitelist, on the left "
+            "to blacklist)connect/$ a filter."
+        )
+
+        template = parse_rich_text(source)
+        payload, _anchors = template.translation_payload()
+
+        self.assertIn(
+            "Connect on the right to whitelist, on the left to blacklist",
+            payload,
+        )
+        self.assertNotIn("$(t:", payload)
         self.assertEqual(template.render_translation(payload), source)
 
 

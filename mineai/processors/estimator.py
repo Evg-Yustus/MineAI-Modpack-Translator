@@ -280,6 +280,7 @@ class StringEstimator:
             source_data,
             target_data,
             mode,
+            target_lang,
         )
         if mode == "skip" and skip_threshold_reached(
             len(source_map),
@@ -433,6 +434,11 @@ class StringEstimator:
                 source_data,
                 target_data,
                 mode,
+                {
+                    "api": target_file.split("_", 1)[0],
+                    "file": target_file,
+                    "regex": target_regex,
+                },
             )
             total_translatable = len(source_map)
         else:

@@ -18,6 +18,7 @@ from mineai.json_utils import (
     key_to_path,
     path_to_key,
 )
+from mineai.language_validation import translation_needs_repair
 from mineai.text_processing import (
     is_technical_term,
     looks_like_source_language,
@@ -36,6 +37,7 @@ def collect_book_json_selection(
     source_data: Any,
     target_data: Any,
     mode: str,
+    target_lang: dict | None = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     """Return filtered source map, preserved target map and pending entries."""
     all_source_map = {
@@ -57,7 +59,16 @@ def collect_book_json_selection(
             key=key,
             path=DocumentPath(key_to_path(key)),
             source=text,
-            existing=target_map.get(key, ""),
+            existing=(
+                ""
+                if target_lang
+                and translation_needs_repair(
+                    text,
+                    target_map.get(key, ""),
+                    target_lang,
+                )
+                else target_map.get(key, "")
+            ),
             translatable=(
                 looks_like_source_language(text)
                 and not is_technical_term(text)

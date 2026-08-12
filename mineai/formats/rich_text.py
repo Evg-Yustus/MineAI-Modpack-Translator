@@ -24,6 +24,7 @@ _IGNORE_ALTERNATION = "|".join(
 _IMMUTABLE_PATTERN = re.compile(
     r"(?P<code>(?P<ticks>`+)[^`\r\n]*(?P=ticks))|"
     r"(?P<tag><(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^'\">\r\n])*>)|"
+    r"(?P<patchouli_tooltip>\$\(t:[^\r\n)]*\))|"
     r"(?P<patchouli>\$\([^\r\n)]*\))|"
     r"(?P<patchouli_close>/\$)|"
     r"(?P<script_variable>\$[A-Za-z_][A-Za-z0-9_]*=?)|"
@@ -51,9 +52,6 @@ _UNSAFE_TRANSLATED_TEXT_PATTERN = re.compile(
     r"<(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^'\">\r\n])*>|"
     r"\$\([^\r\n)]*\)|"
     r"/\$|\$[A-Za-z_][A-Za-z0-9_]*=?|"
-    r"\b[A-Za-z_][A-Za-z0-9_]*(?=\()|"
-    r"\b[a-z0-9_.-]+:[a-z0-9_./-]+\b|"
-    r"\.[A-Za-z_][A-Za-z0-9_]*|"
     r"\](?:\((?:[^()\r\n]|\([^()\r\n]*\))*\)|\[[^\]\r\n]*\])|"
     r"!\[|"
     r"\\[*_~`]|"
@@ -173,7 +171,18 @@ def _parse_standard(text: str) -> list[RichTextPart]:
     cursor = 0
     for match in _IMMUTABLE_PATTERN.finditer(text):
         _append_visible(parts, text[cursor : match.start()])
-        _append_part(parts, match.group(0), translatable=False)
+        if match.group("patchouli_tooltip") is not None:
+            tooltip = match.group(0)
+            _append_part(parts, tooltip[:4], translatable=False)
+            for nested in _parse_standard(tooltip[4:-1]):
+                _append_part(
+                    parts,
+                    nested.text,
+                    translatable=nested.translatable,
+                )
+            _append_part(parts, tooltip[-1:], translatable=False)
+        else:
+            _append_part(parts, match.group(0), translatable=False)
         cursor = match.end()
     _append_visible(parts, text[cursor:])
     return parts
