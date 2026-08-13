@@ -36,7 +36,11 @@ from mineai.processors.selection import (
     skip_threshold_reached,
 )
 from mineai.runtime.state import JobState
-from mineai.text_processing import is_technical_term, looks_like_source_language
+from mineai.text_processing import (
+    is_article_removed_technical_translation,
+    is_technical_term,
+    looks_like_source_language,
+)
 
 
 class JarProcessor:
@@ -750,6 +754,12 @@ class JarProcessor:
             if not re.search(r"[A-Za-z]", source):
                 return None
             if is_technical_term(source.strip()):
+                return None
+            if is_article_removed_technical_translation(
+                source,
+                translated,
+                target_lang.get("api", ""),
+            ):
                 return None
             if translation_needs_repair(source, translated, target_lang):
                 return f"Visible text segment was not fully translated: {source!r}"

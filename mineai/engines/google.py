@@ -42,7 +42,7 @@ class GoogleEngine(TranslationEngine):
 
     def _finalize(self, raw: str, item: EngineItem) -> str:
         text = unmask_translation(raw, item.mapping)
-        return polish_translation(text)
+        return polish_translation(text, boundary_source=item.original)
 
     @staticmethod
     def _raw_is_safe(raw: str, item: EngineItem) -> bool:

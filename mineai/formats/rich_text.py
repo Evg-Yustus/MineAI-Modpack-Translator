@@ -9,6 +9,7 @@ from formatkit.contracts import (
     ProtectedAnchor,
     normalize_anchor_boundaries,
 )
+from formatkit.tokenizer import MODONOMICON_STYLE_SOURCE
 from mineai.constants import IGNORE_TERMS
 from mineai.text_processing import (
     COMPOUND_TECHNICAL_TOKEN_PATTERN,
@@ -24,6 +25,7 @@ _IGNORE_ALTERNATION = "|".join(
 _IMMUTABLE_PATTERN = re.compile(
     r"(?P<code>(?P<ticks>`+)[^`\r\n]*(?P=ticks))|"
     r"(?P<tag><(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^'\">\r\n])*>)|"
+    rf"(?P<modonomicon_style>{MODONOMICON_STYLE_SOURCE})|"
     r"(?P<patchouli_tooltip>\$\(t:[^\r\n)]*\))|"
     r"(?P<patchouli>\$\([^\r\n)]*\))|"
     r"(?P<patchouli_close>/\$)|"
@@ -50,6 +52,8 @@ _IMMUTABLE_PATTERN = re.compile(
 
 _UNSAFE_TRANSLATED_TEXT_PATTERN = re.compile(
     r"<(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^'\">\r\n])*>|"
+    + MODONOMICON_STYLE_SOURCE
+    + r"|"
     r"\$\([^\r\n)]*\)|"
     r"/\$|\$[A-Za-z_][A-Za-z0-9_]*=?|"
     r"\](?:\((?:[^()\r\n]|\([^()\r\n]*\))*\)|\[[^\]\r\n]*\])|"

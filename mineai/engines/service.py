@@ -26,6 +26,7 @@ from mineai.text_processing import (
     PLACEHOLDER_PATTERN,
     apply_smart_glue,
     count_line_breaks,
+    is_article_removed_technical_translation,
     is_technical_term,
     mask_protected_fragments,
     structural_fragments,
@@ -277,6 +278,12 @@ def _validate_candidate(
         if _can_cache_identity(item.original):
             return True, None, True
         return False, "ответ совпадает с оригиналом", False
+    if is_article_removed_technical_translation(
+        item.original,
+        candidate,
+        target_lang.get("api", ""),
+    ):
+        return True, None, False
     if (
         requires_target_script_marker(target_lang)
         and not re.search(target_lang["regex"], candidate)
@@ -578,13 +585,28 @@ class TranslationService:
         cur: dict[str, EngineItem] = {}
         cur_chars = 0
         cur_ph = 0
+        cur_format_sensitive = False
         for key, item in pending.items():
             tlen = len(item.masked)
             ph = len(PLACEHOLDER_PATTERN.findall(item.masked))
+            format_sensitive = bool(
+                key in (candidate_validators or {})
+                and ANCHOR_PATTERN.search(item.original)
+            )
+            next_limit = (
+                5
+                if cur_format_sensitive or format_sensitive
+                else (self.ai_batch if is_ai else 50)
+            )
+            if cur and len(cur) >= next_limit:
+                batches.append(cur)
+                cur, cur_chars, cur_ph = {}, 0, 0
+                cur_format_sensitive = False
             if is_ai and (ph > 15 or tlen > 800):
                 if cur:
                     batches.append(cur)
                     cur, cur_chars, cur_ph = {}, 0, 0
+                    cur_format_sensitive = False
                 batches.append({key: item})
                 continue
             if is_ai and cur and (
@@ -592,14 +614,20 @@ class TranslationService:
             ):
                 batches.append(cur)
                 cur, cur_chars, cur_ph = {}, 0, 0
+                cur_format_sensitive = False
             cur[key] = item
             cur_chars += tlen
             cur_ph += ph
-            if (not is_ai and len(cur) >= 50) or (
-                is_ai and len(cur) >= self.ai_batch
-            ):
+            cur_format_sensitive = cur_format_sensitive or format_sensitive
+            active_limit = (
+                5
+                if cur_format_sensitive
+                else (self.ai_batch if is_ai else 50)
+            )
+            if len(cur) >= active_limit:
                 batches.append(cur)
                 cur, cur_chars, cur_ph = {}, 0, 0
+                cur_format_sensitive = False
         if cur:
             batches.append(cur)
 

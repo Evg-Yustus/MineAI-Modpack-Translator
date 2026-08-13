@@ -5,8 +5,14 @@ from __future__ import annotations
 import re
 
 
+MODONOMICON_STYLE_SOURCE = (
+    r"\[\s*#\s*\]\s*\(\s*(?:[0-9a-f]{6})?\s*\)"
+)
+
 GAME_TOKEN_SOURCE = (
     r"(?:"
+    + MODONOMICON_STYLE_SOURCE
+    + r"|"
     r"\$\([^\r\n)]*\)|"
     r"[§&]x(?:[§&][0-9a-f]){6}|"
     r"&#[0-9a-f]{6}|"

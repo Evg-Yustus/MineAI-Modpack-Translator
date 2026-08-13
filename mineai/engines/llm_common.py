@@ -51,7 +51,8 @@ def save_prompts(prompts_dict: dict[str, str]) -> None:
 def dump_ai_error(prompt: str, response: str, error_msg: str) -> None:
     try:
         with open("ai_error_log.txt", "a", encoding="utf-8") as f:
-            f.write(f"=== ОШИБКА ИИ ===\n")
+            f.write("=== НЕУДАЧНАЯ ПОПЫТКА ИИ ===\n")
+            f.write("СТАТУС: промежуточная; может быть исправлена повтором\n")
             f.write(f"ПРИЧИНА: {error_msg}\n")
             f.write(f"--- ЗАПРОС ---\n{prompt}\n")
             f.write(f"--- ОТВЕТ ---\n{response}\n")
@@ -552,7 +553,10 @@ class BatchLlmEngine(TranslationEngine):
             if success and len(translated_parts) == len(sub_chunks):
                 combined_masked = "".join(translated_parts)
                 text = unmask_translation(combined_masked, item.mapping)
-                result[key] = polish_translation(text)
+                result[key] = polish_translation(
+                    text,
+                    boundary_source=item.original,
+                )
             else:
                 all_failed.append(key)
         # === КОНЕЦ ОБРАБОТКИ СЛОЖНЫХ СТРОК ===
@@ -633,7 +637,10 @@ class BatchLlmEngine(TranslationEngine):
                             continue
                         raw = fixed
                     text = unmask_translation(raw, items[key].mapping)
-                    result[key] = polish_translation(text)
+                    result[key] = polish_translation(
+                        text,
+                        boundary_source=items[key].original,
+                    )
                 if len(all_failed) > len(complex_keys):
                     callbacks.on_log(
                         f"❌ {self.label}: не прошли проверку — {len(all_failed) - len(complex_keys)} строк",

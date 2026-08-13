@@ -212,7 +212,7 @@ class TranslationPlan:
         candidate: str,
         visible_text_validator: VisibleTextValidator | None = None,
     ) -> str | None:
-        """Validate immutable syntax and optionally each visible text segment."""
+        """Validate immutable syntax, full visible text and link labels."""
         unit = next((item for item in self.units if item.id == unit_id), None)
         if unit is None:
             return f"Unknown translation unit id: {unit_id}"
@@ -227,8 +227,27 @@ class TranslationPlan:
             return "Protected segment layout changed"
         if visible_text_validator is None:
             return None
-        for source_part, target_part in zip(source_parts, target_parts):
-            if ANCHOR_PATTERN.fullmatch(source_part):
+        source_visible = ANCHOR_PATTERN.sub("", unit.payload)
+        target_visible = ANCHOR_PATTERN.sub("", candidate)
+        reason = visible_text_validator(source_visible, target_visible)
+        if reason:
+            return reason
+
+        anchor_sources = {
+            anchor.token: anchor.source
+            for anchor in unit.anchors
+        }
+        for index in range(2, len(source_parts) - 1, 2):
+            source_part = source_parts[index]
+            target_part = target_parts[index]
+            left = anchor_sources.get(source_parts[index - 1], "")
+            right = anchor_sources.get(source_parts[index + 1], "")
+            is_markdown_label = (
+                left in {"[", "![", "{"}
+                and (right.startswith("](") or right.startswith("|"))
+            )
+            is_ie_label = left.lower().startswith("<link;") and right.endswith(">")
+            if not (is_markdown_label or is_ie_label):
                 continue
             reason = visible_text_validator(source_part, target_part)
             if reason:

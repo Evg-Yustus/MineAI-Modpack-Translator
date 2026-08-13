@@ -20,10 +20,10 @@ _TABLE_DELIMITER = re.compile(r"^:?-{3,}:?$")
 _INLINE_TOKEN = re.compile(
     r"(?P<code>(?P<ticks>`+)[^`\r\n]*(?P=ticks))|"
     r"(?P<image>!\[[^\]]*\]\([^)]*\))|"
+    rf"(?P<game>{GAME_TOKEN_SOURCE})|"
     r"(?P<link>\[[^\]]+\]\([^)]*\))|"
     r"(?P<braced_link>\{[^{}|]+\|[^{}]+\})|"
     r"(?P<tag><[^>]*>)|"
-    rf"(?P<game>{GAME_TOKEN_SOURCE})|"
     r"(?P<escape>\\[^\r\n])|"
     r"(?P<emphasis>\*{1,3}|_{1,3}|~~)|"
     r"(?P<newline>\r\n[ \t]*|\r[ \t]*|\n[ \t]*)",
@@ -37,6 +37,7 @@ _LABEL_TOKEN = re.compile(
 _BLOCK_PREFIX = re.compile(
     r"^(?P<prefix>\s*(?:#{1,6}\s+|(?:[-+*]|\d+[.)])\s+|(?:>\s*)+))"
 )
+_LIST_PREFIX = re.compile(r"^\s*(?:[-+*]|\d+[.)])\s+")
 
 
 @dataclass(frozen=True)
@@ -223,7 +224,7 @@ def _basic_validator(source: str, target: str) -> ValidationReport:
 
 
 class MarkdownAdapter:
-    adapter_id = "markdown-v1"
+    adapter_id = "markdown-v2"
 
     def supports(self, logical_path: str, text: str) -> bool:
         del text
@@ -312,9 +313,28 @@ class MarkdownAdapter:
             prefix = _BLOCK_PREFIX.match(line.content)
             if prefix:
                 start = line.start + prefix.end()
-                if start < line.content_end:
-                    add_unit(start, line.content_end, text[start:line.content_end], "block")
-                index += 1
+                block_end = line.content_end
+                end_index = index + 1
+                if _LIST_PREFIX.match(line.content):
+                    while end_index < len(records):
+                        next_line = records[end_index]
+                        next_stripped = next_line.content.strip()
+                        if (
+                            not next_stripped
+                            or re.match(r"^(`{3,}|~{3,})", next_stripped)
+                            or _is_table(next_line.content)
+                            or _BLOCK_PREFIX.match(next_line.content)
+                            or (
+                                next_stripped.startswith("<")
+                                and next_stripped.endswith(">")
+                            )
+                        ):
+                            break
+                        block_end = next_line.content_end
+                        end_index += 1
+                if start < block_end:
+                    add_unit(start, block_end, text[start:block_end], "block")
+                index = end_index
                 continue
 
             paragraph_start = line.start + len(line.content) - len(line.content.lstrip())

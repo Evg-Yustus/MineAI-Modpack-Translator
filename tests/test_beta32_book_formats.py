@@ -186,6 +186,25 @@ class ModonomiconAdapterTests(unittest.TestCase):
             },
         )
 
+    def test_localization_keys_with_resource_path_are_not_translated(self) -> None:
+        key = (
+            "book.geneticsresequenced.guide.genes."
+            "geneticsresequenced/explosive_exit.page0.text"
+        )
+        source = json.dumps({"text": key})
+        path = (
+            "data/geneticsresequenced/modonomicon/books/guide/"
+            "entries/genes/explosive_exit.json"
+        )
+
+        plan = self.registry.plan(path, source, "ru_ru")
+
+        self.assertEqual(plan.units, ())
+        self.assertEqual(
+            self.registry.companion_lang_keys([(path, source)]),
+            {key},
+        )
+
     def test_malformed_document_does_not_hide_valid_companion_keys(self) -> None:
         valid_path = (
             "data/occultism/modonomicon/books/dictionary/entries/valid.json"

@@ -16,6 +16,7 @@ with tempfile.TemporaryDirectory() as _import_cwd:
         from mineai.engines.llm_common import (
             BatchLlmEngine,
             build_translation_prompt,
+            dump_ai_error,
             placeholders_match,
             repair_markers,
         )
@@ -78,6 +79,40 @@ class ServiceWithEngine(TranslationService):
 
 
 class BatchLlmEngineTests(unittest.TestCase):
+    def test_finalizer_restores_source_boundary_newline(self) -> None:
+        source = "Description\r\n"
+        masked, mapping = mask_protected_fragments(source)
+
+        engine = BatchLlmEngine(
+            call_api=lambda _prompt, _limit: json.dumps(
+                {"entry": masked.replace("Description", "Описание")},
+                ensure_ascii=False,
+            )
+        )
+        item = EngineItem("entry", source, masked, mapping)
+
+        result = engine.translate_batch(
+            {"entry": item},
+            TARGET_LANG,
+            callbacks(),
+        )
+
+        self.assertEqual(result, {"entry": "Описание\r\n"})
+
+    def test_ai_error_log_marks_failed_attempt_as_non_final(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            previous = os.getcwd()
+            os.chdir(directory)
+            try:
+                dump_ai_error("Source", "Broken", "Markers changed")
+                with open("ai_error_log.txt", encoding="utf-8-sig") as stream:
+                    content = stream.read()
+            finally:
+                os.chdir(previous)
+
+        self.assertIn("НЕУДАЧНАЯ ПОПЫТКА ИИ", content)
+        self.assertIn("может быть исправлена повтором", content)
+
     def test_placeholder_order_must_match_source(self) -> None:
         self.assertFalse(
             placeholders_match("[#1#]Перевод[#0#]", "[#0#]Source[#1#]")

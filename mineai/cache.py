@@ -10,7 +10,7 @@ from mineai.text_processing import polish_translation
 
 _IDENTITY_PREFIX = "__mineai_identity__:"
 _CACHE_VERSION_KEY = "__mineai_ai_cache_validation_version__"
-_CACHE_VALIDATION_VERSION = "26"
+_CACHE_VALIDATION_VERSION = "28"
 _LANGUAGE_BY_API = {item["api"]: item for item in LANGUAGES.values()}
 
 
@@ -89,17 +89,28 @@ class TranslationCache:
                 self._is_ai_cache()
                 and self._data.get(_CACHE_VERSION_KEY) != _CACHE_VALIDATION_VERSION
             ):
-                backup = self.filepath + ".pre-beta26"
+                previous_version = self._data.get(_CACHE_VERSION_KEY)
+                backup_suffix = (
+                    ".pre-beta34"
+                    if previous_version == "27"
+                    else ".pre-beta33"
+                )
+                backup = self.filepath + backup_suffix
                 if not os.path.exists(backup):
                     try:
                         shutil.copy2(self.filepath, backup)
                     except OSError:
                         pass
-                changes += len(self._data)
-                self._data = {_CACHE_VERSION_KEY: _CACHE_VALIDATION_VERSION}
+                if previous_version == "27":
+                    self._data[_CACHE_VERSION_KEY] = _CACHE_VALIDATION_VERSION
+                    changes += 1
+                else:
+                    changes += len(self._data)
+                    self._data = {_CACHE_VERSION_KEY: _CACHE_VALIDATION_VERSION}
                 self._dirty = True
                 self._flush_unlocked()
-                return changes
+                if previous_version != "27":
+                    return changes
 
             for key, value in list(self._data.items()):
                 if key == _CACHE_VERSION_KEY:
@@ -127,7 +138,10 @@ class TranslationCache:
                     del self._data[key]
                     changes += 1
                     continue
-                polished = polish_translation(value)
+                polished = polish_translation(
+                    value,
+                    boundary_source=source_payload,
+                )
                 if polished != value:
                     self._data[key] = polished
                     changes += 1

@@ -9,7 +9,7 @@ from formatkit.contracts import TranslationPlan
 
 
 class GuideMeAdapter(MarkdownAdapter):
-    adapter_id = "guideme-v1"
+    adapter_id = "guideme-v2"
 
     def supports(self, logical_path: str, text: str) -> bool:
         del text
@@ -54,7 +54,7 @@ class GuideMeAdapter(MarkdownAdapter):
             target_path=base.target_path,
             units=tuple(
                 unit.__class__(
-                    id=unit.id.replace("markdown-v1:", "guideme-v1:"),
+                    id=unit.id.replace("markdown-v2:", "guideme-v2:"),
                     payload=unit.payload,
                     start=unit.start,
                     end=unit.end,
@@ -66,4 +66,3 @@ class GuideMeAdapter(MarkdownAdapter):
             ),
             validator=base.validator,
         )
-

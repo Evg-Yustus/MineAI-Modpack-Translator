@@ -485,6 +485,16 @@ class TranslationJob:
                         pack_writer.abort()
                     else:
                         pack_outputs = pack_writer.close()
+                        installed_paths = getattr(
+                            pack_writer, "datapack_installed_paths", ()
+                        )
+                        if isinstance(installed_paths, (list, tuple)):
+                            for changed_path in installed_paths:
+                                if (
+                                    isinstance(changed_path, str)
+                                    and changed_path not in modified_paths
+                                ):
+                                    modified_paths.append(changed_path)
                 except Exception:
                     failed = True
                     self.on_log(
@@ -501,6 +511,14 @@ class TranslationJob:
         elif failed_files:
             self.on_log(
                 f"\n⚠️ ЗАВЕРШЕНО С ОШИБКАМИ: пропущено файлов — {failed_files}.",
+                "yellow",
+            )
+            self.on_status("Завершено с ошибками", 1.0)
+        elif self.state.snapshot().failed_strings:
+            failed_strings = self.state.snapshot().failed_strings
+            self.on_log(
+                "\n⚠️ ЗАВЕРШЕНО С ОШИБКАМИ: "
+                f"не переведено строк — {failed_strings}.",
                 "yellow",
             )
             self.on_status("Завершено с ошибками", 1.0)
@@ -528,6 +546,17 @@ class TranslationJob:
                     )
             if datapack:
                 self.on_log(f"📂 Датапак: {datapack}", "magenta")
+                if (
+                    pack_writer
+                    and getattr(pack_writer, "datapack_install_mode", "")
+                    == "manual"
+                ):
+                    self.on_log(
+                        "⚠️ В сборке не найден OpenLoader или KubeJS. "
+                        "Архив создан, но его нужно поместить в папку "
+                        "datapacks нужного мира вручную.",
+                        "yellow",
+                    )
             for changed_path in modified_paths:
                 self.on_log(f"📝 Изменён файл: {changed_path}", "cyan")
 

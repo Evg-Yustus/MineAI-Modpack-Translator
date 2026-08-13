@@ -1,4 +1,5 @@
 ﻿import os
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -9,6 +10,7 @@ with tempfile.TemporaryDirectory() as _import_cwd:
     try:
         from mineai.cache import TranslationCache
         from mineai.engines.base import EngineCallbacks, TranslationEngine
+        from mineai.engines.google import GoogleEngine
         from mineai.engines.service import TranslationService
         from mineai.text_processing import is_technical_term, polish_translation
     finally:
@@ -105,6 +107,66 @@ def _callbacks(logs, progress=None):
 
 
 class TranslationServiceRegressionTests(unittest.TestCase):
+    def test_modonomicon_color_tokens_are_atomic_for_ai_and_google(self):
+        source = "[#] (8B0000)Blood Wood[#] () is powerful."
+        translated = "[#] (8B0000)Кровавая древесина[#] () очень прочна."
+
+        for engine_name in ("ai", "google"):
+            with self.subTest(engine=engine_name):
+                def translate(items):
+                    item = next(iter(items.values()))
+                    self.assertNotIn("8B0000", item.masked)
+                    self.assertNotIn("[#]", item.masked)
+                    return {item.key: translated}
+
+                result = _Service(
+                    _Engine(translate),
+                    _MemoryCache(),
+                    _Config(),
+                    engine_name=engine_name,
+                ).translate_dict(
+                    {"entry": source},
+                    TARGET_LANG,
+                    _callbacks([]),
+                    prompt_type="books",
+                )
+
+                self.assertEqual(result, {"entry": translated})
+
+    def test_google_finalizer_restores_source_boundary_newline(self):
+        source = "Description\r\n"
+        masked, mapping = __import__(
+            "mineai.text_processing",
+            fromlist=["mask_protected_fragments"],
+        ).mask_protected_fragments(source)
+        item = __import__(
+            "mineai.engines.base",
+            fromlist=["EngineItem"],
+        ).EngineItem("entry", source, masked, mapping)
+        raw = masked.replace("Description", "Описание")
+
+        result = GoogleEngine(workers=1, mode="single")._finalize(raw, item)
+
+        self.assertEqual(result, "Описание\r\n")
+
+    def test_article_only_technical_label_is_valid_for_all_engines(self):
+        for engine_name in ("ai", "google"):
+            with self.subTest(engine=engine_name):
+                engine = _Engine(lambda items: {next(iter(items)): "UI"})
+                result = _Service(
+                    engine,
+                    _MemoryCache(),
+                    _Config(),
+                    engine_name=engine_name,
+                ).translate_dict(
+                    {"label": "The UI"},
+                    TARGET_LANG,
+                    _callbacks([]),
+                    prompt_type="books",
+                )
+
+                self.assertEqual(result, {"label": "UI"})
+
     def test_russian_article_and_punctuation_fragment_may_lose_all_letters(self):
         for engine_name in ("ai", "google"):
             with self.subTest(engine=engine_name):
@@ -628,6 +690,39 @@ class TranslationServiceRegressionTests(unittest.TestCase):
         self.assertEqual(result, {"key": "Корректный русский перевод"})
         retry.translate_batch.assert_called_once()
 
+    def test_anchor_rich_formatkit_blocks_use_small_batches_for_all_engines(self):
+        strings = {
+            f"key-{index}": f"Source {index} ⟦FK0000⟧ description"
+            for index in range(12)
+        }
+        validators = {key: lambda _candidate: None for key in strings}
+
+        for engine_name in ("ai", "google"):
+            with self.subTest(engine=engine_name):
+                engine = _Engine(
+                    lambda items: {
+                        key: item.original.replace("Source", "Источник").replace(
+                            "description",
+                            "описание",
+                        )
+                        for key, item in items.items()
+                    }
+                )
+                result = _Service(
+                    engine,
+                    _MemoryCache(),
+                    _Config(),
+                    engine_name=engine_name,
+                ).translate_dict(
+                    strings,
+                    TARGET_LANG,
+                    _callbacks([]),
+                    candidate_validators=validators,
+                )
+
+                self.assertEqual(len(result), len(strings))
+                self.assertLessEqual(max(map(len, engine.calls)), 5)
+
     def test_failed_anchor_block_is_retranslated_by_visible_segments(self):
         source = "First sentence.⟦FK0000⟧Second sentence."
         expected = "Первое предложение.⟦FK0000⟧Второе предложение."
@@ -720,6 +815,24 @@ class TranslationServiceRegressionTests(unittest.TestCase):
 
 
 class TranslationCacheIdentityTests(unittest.TestCase):
+    def test_beta33_invalidates_beta32_ai_cache_automatically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ai_cache.json")
+            with open(path, "w", encoding="utf-8") as stream:
+                json.dump(
+                    {
+                        "__mineai_ai_cache_validation_version__": "26",
+                        "ru_Exactly one": "не более одного",
+                    },
+                    stream,
+                    ensure_ascii=False,
+                )
+
+            cache = TranslationCache(path)
+
+            self.assertEqual(cache.get("ru", "Exactly one"), (None, False))
+            self.assertTrue(os.path.exists(path + ".pre-beta33"))
+
     def test_identity_survives_reload_and_normalizes_newlines(self):
         with tempfile.TemporaryDirectory() as directory:
             previous_cwd = os.getcwd()

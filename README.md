@@ -1,6 +1,6 @@
 ﻿# 🌍 MineAI Translator (The Ultimate Modpack Localizer)
 
-[![Beta32](https://img.shields.io/badge/version-10.0.0--BETAv32-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
+[![Beta34](https://img.shields.io/badge/version-10.0.0--BETAv34-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
 [![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
@@ -27,7 +27,7 @@ The program features a modern Graphical User Interface (GUI). You don't need to 
 You don't need to install Python or mess with code! You can download the ready-to-use application.
 
 1. Go to the [Releases](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases) tab on the right.
-2. Download the latest **`MineAI_Translator_Beta32.exe`** file.
+2. Download the latest **`MineAI_Translator_Beta34.exe`** file.
 3. Place it in a convenient folder and run it with a double click.
 
 *(For advanced users and developers, instructions on running from source code are at the bottom of the page).*
@@ -155,11 +155,11 @@ mineai/
 If you modified the code and want to build your own executable without a console window, simply run the provided batch file:
 `build.bat`
 
-The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta32.exe`.
+The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta34.exe`.
 
 ### FormatKit SDK
 
-Beta32 includes a filesystem-independent format library for other Minecraft
+Beta34 includes a filesystem-independent format library for other Minecraft
 translation tools. The caller supplies a logical path and decoded text;
 FormatKit returns protected translation units and rebuilds a validated target.
 See [`formatkit/README.md`](formatkit/README.md) for the public API.
@@ -185,6 +185,9 @@ See [`formatkit/README.md`](formatkit/README.md) for the public API.
 * ☁️ **Облачный ИИ через OpenRouter:** Подключайте топовые нейросети (Qwen, Claude, GPT) в один клик без нагрузки на собственную видеокарту!
 * ⚡ **Высокая скорость:** Многопоточный Google Translate отправляет запросы пачками, переводя тысячи строк за считанные минуты.
 * 📦 **Безопасная упаковка:** Программа генерирует готовый Resource Pack или Data Pack, вообще не повреждая ваши оригинальные `.jar` файлы модов.
+* 🔌 **Реальная установка датапака:** MineAI проверяет `modId` установленных
+  модов и использует доступный OpenLoader или KubeJS. Если загрузчика нет,
+  создаётся архив для ручной установки без ложного сообщения об активации.
 * 🏛️ **Heracles / Odyssey Quests:** Заголовки, описания, группы и tutorial
   переводятся непосредственно в `config/heracles` с английским `.bak`,
   атомарной записью и проверкой неизменности ID, команд, NBT и условий.
@@ -234,11 +237,11 @@ API-токен нужен только тогда, когда авторизац
 
 Для сборки собственного `.exe` файла без окна консоли используйте готовый батник:
 `build.bat`
-(Результат появится в папке `dist/MineAI_Translator_Beta32.exe`).
+(Результат появится в папке `dist/MineAI_Translator_Beta34.exe`).
 
 ### SDK FormatKit
 
-В Beta32 безопасный разбор книг работает как независимая библиотека без GUI,
+В Beta34 безопасный разбор книг работает как независимая библиотека без GUI,
 файлового сканера и сетевого переводчика. Публичный контракт и пример
 встраивания описаны в [`formatkit/README.md`](formatkit/README.md).
 

@@ -43,11 +43,11 @@ target_text = result.text
 
 ## Встроенные адаптеры
 
-- `guideme-v1`: Markdown/MDX GuideME, обязательный каталог `_ru_ru`, сцены,
+- `guideme-v2`: Markdown/MDX GuideME, обязательный каталог `_ru_ru`, сцены,
   импорты структур, таблицы, ссылки и теги;
 - `ie-manual-v1`: текстовые страницы Immersive Engineering, включая
   `<link;target;label>`, `<&...>`, `<np>`, `<br>` и цветовые коды;
-- `markdown-v1`: остальные книжные `.md`, `.markdown` и `.txt`, включая
+- `markdown-v2`: остальные книжные `.md`, `.markdown` и `.txt`, включая
   braced-ссылки `{label|target}` из книг Alex's Caves/Citadel.
 - `properties-v1`: локализованные `key=value`/`key:value` файлы `.lang`;
 - `xml-text-v1`: текстовые узлы локализованных XML без изменения тегов,

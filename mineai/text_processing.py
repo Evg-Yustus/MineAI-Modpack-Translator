@@ -2,6 +2,7 @@
 import re
 from functools import lru_cache
 
+from formatkit.tokenizer import MODONOMICON_STYLE_SOURCE
 from mineai.constants import DICT_FILE, IGNORE_TERMS
 from mineai.io_utils import atomic_write_text
 
@@ -19,6 +20,11 @@ MARKDOWN_LINK_PATTERN = re.compile(
 
 MARKDOWN_IMAGE_PATTERN = re.compile(
     r"!\[([^\]\n]*)\]\(([^)\n]+)\)"
+)
+
+MODONOMICON_STYLE_PATTERN = re.compile(
+    MODONOMICON_STYLE_SOURCE,
+    flags=re.IGNORECASE,
 )
 
 MARKDOWN_INLINE_CODE_PATTERN = re.compile(
@@ -53,6 +59,8 @@ JSON_TEXT_VALUE_PATTERN = re.compile(
 
 FORMAT_PATTERN = re.compile(
     r"("
+    + MODONOMICON_STYLE_SOURCE
+    + r"|"
     r"⟦FK\d{4}⟧|"
     r"#[A-Za-z_][A-Za-z0-9_.:/-]*#|"
     r"\$\([^)]*\)|"
@@ -73,6 +81,8 @@ FORMAT_PATTERN = re.compile(
 
 STRUCTURAL_FRAGMENT_PATTERN = re.compile(
     r"("
+    + MODONOMICON_STYLE_SOURCE
+    + r"|"
     r"⟦FK\d{4}⟧|"
     r"#[A-Za-z_][A-Za-z0-9_.:/-]*#|"
     r"\$\([^\r\n)]*\)|"
@@ -122,9 +132,20 @@ def load_dictionary() -> dict[str, str]:
 TERMINOLOGY_FIXES = load_dictionary()
 
 
-def polish_translation(text: str) -> str:
+def polish_translation(
+    text: str,
+    *,
+    boundary_source: str | None = None,
+) -> str:
     if not isinstance(text, str) or not text:
         return text
+    if boundary_source is not None and not boundary_source.strip():
+        return boundary_source
+    leading = ""
+    trailing = ""
+    if boundary_source is not None:
+        leading = re.match(r"\s*", boundary_source).group(0)
+        trailing = re.search(r"\s*$", boundary_source).group(0)
     text = text.strip()
     angle_tags: dict[str, str] = {}
 
@@ -172,7 +193,7 @@ def polish_translation(text: str) -> str:
         text = re.sub(r"\b" + re.escape(wrong) + r"\b", repl, text, flags=re.IGNORECASE)
     for token, angle_tag in angle_tags.items():
         text = text.replace(token, angle_tag)
-    return text
+    return leading + text + trailing
 
 
 def count_line_breaks(text: str) -> int:
@@ -244,6 +265,7 @@ def mask_protected_fragments(text: str) -> tuple[str, dict[str, str]]:
             parts.append(reserve(text[cursor:]))
         text = "".join(parts)
 
+    text = MODONOMICON_STYLE_PATTERN.sub(replacer, text)
     text = MARKDOWN_IMAGE_PATTERN.sub(protect_markdown_image, text)
     text = MARKDOWN_LINK_PATTERN.sub(protect_markdown_link, text)
     text = MARKDOWN_INLINE_CODE_PATTERN.sub(protect_inline_code, text)
@@ -392,6 +414,25 @@ def is_technical_term(text: str) -> bool:
         "kubejs_",
     )
     return any(lower.startswith(prefix) for prefix in prefixes)
+
+
+def is_article_removed_technical_translation(
+    source: str,
+    candidate: str,
+    target_api: str,
+) -> bool:
+    """Allow dropping only an English article before an immutable technical label."""
+    if target_api == "en":
+        return False
+    match = re.fullmatch(
+        r"\s*(?:a|an|the)\s+(.+?)\s*",
+        source,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return False
+    remainder = match.group(1).strip()
+    return candidate.strip() == remainder and is_technical_term(remainder)
 
 
 def is_translation_key(text: str) -> bool:

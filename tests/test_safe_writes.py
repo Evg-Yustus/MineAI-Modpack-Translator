@@ -62,11 +62,34 @@ class AtomicWriteTests(unittest.TestCase):
             cache = TranslationCache(path)
 
             self.assertEqual(cache.get("ru", "When fully upgraded."), (None, False))
-            self.assertTrue(os.path.exists(path + ".pre-beta26"))
+            self.assertTrue(os.path.exists(path + ".pre-beta33"))
             cache.set("ru", "Hello", "Привет")
             cache.save()
             reloaded = TranslationCache(path)
             self.assertEqual(reloaded.get("ru", "Hello"), ("Привет", False))
+
+    def test_beta33_ai_cache_is_upgraded_without_losing_valid_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ai_cache.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "__mineai_ai_cache_validation_version__": "27",
+                        "ru_Description": "Описание",
+                    },
+                    handle,
+                    ensure_ascii=False,
+                )
+
+            cache = TranslationCache(path)
+
+            self.assertEqual(cache.get("ru", "Description"), ("Описание", False))
+            self.assertTrue(os.path.exists(path + ".pre-beta34"))
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(
+                    json.load(handle)["__mineai_ai_cache_validation_version__"],
+                    "28",
+                )
 
     def test_failed_replace_preserves_original_and_removes_temp_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -99,6 +122,144 @@ class AtomicWriteTests(unittest.TestCase):
 
 
 class PackWriterTests(unittest.TestCase):
+    def test_datapack_uses_kubejs_when_openloader_is_not_installed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mods = os.path.join(directory, "mods")
+            os.makedirs(mods)
+            with zipfile.ZipFile(
+                os.path.join(mods, "renamed-script-engine.jar"), "w"
+            ) as archive:
+                archive.writestr(
+                    "META-INF/neoforge.mods.toml",
+                    '[[mods]]\nmodId = "kubejs"\n',
+                )
+
+            writer = PackWriter(directory, "Pagan Guide", "1.21.1", "Russian")
+            writer.write(
+                "data/paganbless/modonomicon/books/pagan_guide/book.json",
+                '{"name":"Языческое руководство"}'.encode("utf-8"),
+            )
+
+            resourcepack, datapack = writer.close()
+
+            target = os.path.join(
+                directory,
+                "kubejs",
+                "data",
+                "paganbless",
+                "modonomicon",
+                "books",
+                "pagan_guide",
+                "book.json",
+            )
+            self.assertIsNone(resourcepack)
+            self.assertIsNone(datapack)
+            self.assertEqual(writer.datapack_install_mode, "kubejs")
+            self.assertEqual(writer.datapack_installed_paths, [target])
+            with open(target, "rb") as handle:
+                self.assertEqual(
+                    handle.read(),
+                    '{"name":"Языческое руководство"}'.encode("utf-8"),
+                )
+            self.assertFalse(
+                os.path.exists(os.path.join(directory, "config", "openloader"))
+            )
+
+    def test_datapack_uses_openloader_only_when_mod_is_installed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mods = os.path.join(directory, "mods")
+            os.makedirs(mods)
+            with zipfile.ZipFile(
+                os.path.join(mods, "renamed-data-loader.jar"), "w"
+            ) as archive:
+                archive.writestr(
+                    "META-INF/mods.toml",
+                    '[[mods]]\nmodId = "openloader"\n',
+                )
+
+            writer = PackWriter(directory, "Book", "1.20.1", "Russian")
+            writer.write("data/example/books/page.json", b"{}")
+
+            _resourcepack, datapack = writer.close()
+
+            self.assertEqual(writer.datapack_install_mode, "openloader")
+            self.assertIsNotNone(datapack)
+            self.assertTrue(
+                os.path.normpath(datapack).startswith(
+                    os.path.normpath(
+                        os.path.join(directory, "config", "openloader", "data")
+                    )
+                )
+            )
+            with zipfile.ZipFile(datapack) as archive:
+                self.assertIn("data/example/books/page.json", archive.namelist())
+
+    def test_datapack_without_loader_is_kept_for_manual_world_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            writer = PackWriter(directory, "Book", "1.21.1", "Russian")
+            writer.write("data/example/books/page.json", b"{}")
+
+            _resourcepack, datapack = writer.close()
+
+            self.assertEqual(writer.datapack_install_mode, "manual")
+            self.assertIsNotNone(datapack)
+            self.assertTrue(
+                os.path.normpath(datapack).startswith(
+                    os.path.normpath(
+                        os.path.join(directory, "MineAI_Datapacks")
+                    )
+                )
+            )
+            self.assertFalse(
+                os.path.exists(os.path.join(directory, "config", "openloader"))
+            )
+
+    def test_kubejs_files_are_rolled_back_if_final_pack_validation_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mods = os.path.join(directory, "mods")
+            os.makedirs(mods)
+            with zipfile.ZipFile(os.path.join(mods, "kubejs.jar"), "w") as archive:
+                archive.writestr(
+                    "META-INF/neoforge.mods.toml",
+                    '[[mods]]\nmodId = "kubejs"\n',
+                )
+            target = os.path.join(
+                directory, "kubejs", "data", "example", "books", "page.json"
+            )
+            os.makedirs(os.path.dirname(target))
+            with open(target, "wb") as handle:
+                handle.write(b"original")
+            writer = PackWriter(directory, "Book", "1.21.1", "Russian")
+            writer.write("data/example/books/page.json", b"translated")
+            writer.write("assets/example/lang/ru_ru.json", b"{}")
+
+            with mock.patch.object(
+                writer, "_validate_zip", side_effect=zipfile.BadZipFile("broken")
+            ):
+                with self.assertRaises(zipfile.BadZipFile):
+                    writer.close()
+
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"original")
+            self.assertEqual(writer.datapack_installed_paths, [])
+
+    def test_kubejs_install_rejects_data_path_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mods = os.path.join(directory, "mods")
+            os.makedirs(mods)
+            with zipfile.ZipFile(os.path.join(mods, "kubejs.jar"), "w") as archive:
+                archive.writestr(
+                    "META-INF/neoforge.mods.toml",
+                    '[[mods]]\nmodId = "kubejs"\n',
+                )
+            writer = PackWriter(directory, "Unsafe", "1.21.1", "Russian")
+            writer.write("data/../../outside.json", b"unsafe")
+
+            with self.assertRaises(ValueError):
+                writer.close()
+
+            self.assertFalse(os.path.exists(os.path.join(directory, "outside.json")))
+
     def test_embedded_and_shorthand_lang_paths_become_resourcepack_assets(self):
         with tempfile.TemporaryDirectory() as directory:
             writer = PackWriter(directory, "Paths", "1.21.1", "Russian")

@@ -21,7 +21,9 @@ _TRANSLATABLE_KEY = re.compile(
     r"entity_name|multiblock_name)$",
     re.IGNORECASE,
 )
-_LOCALIZATION_KEY = re.compile(r"^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$")
+_LOCALIZATION_KEY = re.compile(
+    r"^(?=[a-z0-9_./-]*\.)[a-z0-9_-]+(?:[./][a-z0-9_-]+)+$"
+)
 
 
 def is_modonomicon_path(logical_path: str) -> bool:
