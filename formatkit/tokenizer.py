@@ -9,9 +9,15 @@ MODONOMICON_STYLE_SOURCE = (
     r"\[\s*#\s*\]\s*\(\s*(?:[0-9a-f]{6})?\s*\)"
 )
 
+STYLE_RESET_BOUNDARY_SOURCE = (
+    r"[§&]r(?:[^\w\r\n<§&]*[ \t]+|[^\w\s\r\n<§&]+)"
+)
+
 GAME_TOKEN_SOURCE = (
     r"(?:"
     + MODONOMICON_STYLE_SOURCE
+    + r"|"
+    + STYLE_RESET_BOUNDARY_SOURCE
     + r"|"
     r"\$\([^\r\n)]*\)|"
     r"[§&]x(?:[§&][0-9a-f]){6}|"

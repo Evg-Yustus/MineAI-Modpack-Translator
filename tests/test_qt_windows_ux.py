@@ -149,6 +149,36 @@ class WheelSafetyTests(unittest.TestCase):
             window.close()
             settings.set_many("GENERAL", original)
 
+    def test_cache_recovery_checkbox_disables_modes_and_uses_local_ai(self):
+        previous = settings.get("GENERAL", "cache_recovery_mode")
+        settings.set("GENERAL", "cache_recovery_mode", False)
+        window = TranslatorQtWindow()
+        try:
+            window.engine_combo.setCurrentText("Google")
+            window.cache_recovery_checkbox.setChecked(True)
+            self.app.processEvents()
+
+            self.assertTrue(window.cache_recovery_checkbox.isChecked())
+            self.assertEqual(
+                window._translation_options().cache_recovery_mode,
+                True,
+            )
+            self.assertEqual(
+                window._translation_options().ai_provider,
+                "local",
+            )
+            self.assertTrue(window.ai_fallback.isChecked())
+            self.assertFalse(window.ai_fallback.isEnabled())
+            self.assertTrue(
+                all(not button.isEnabled() for button in window.mode_buttons.values())
+            )
+            self.assertTrue(
+                settings.getboolean("GENERAL", "cache_recovery_mode")
+            )
+        finally:
+            window.close()
+            settings.set("GENERAL", "cache_recovery_mode", previous)
+
     def test_log_toolbar_has_only_clear_and_export_actions(self):
         window = TranslatorQtWindow()
         try:

@@ -18,6 +18,7 @@ class ConfigManager:
             "color": "blue",
             "smart_glue": "True",
             "google_workers": "5",
+            "cache_recovery_mode": "False",
         },
         "AI": {
             "exe_path": "koboldcpp.exe",

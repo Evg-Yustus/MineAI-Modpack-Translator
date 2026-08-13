@@ -49,6 +49,7 @@ class TranslationOptions:
     translate_books: bool
     translate_quests: bool
     selected_items: frozenset[str] | None = None
+    cache_recovery_mode: bool = False
 
 
 class TranslationJob:
@@ -159,7 +160,28 @@ class TranslationJob:
 
     def run_translation(self, options: TranslationOptions) -> None:
         lang = LANGUAGES[options.language_label]
-        cache = self.cache_ai if options.engine == "ai" else self.cache_std
+        if options.cache_recovery_mode and (
+            options.engine != "ai"
+            or options.ai_provider not in {"local", "lmstudio"}
+        ):
+            self.on_log(
+                "❌ Для восстановления кэша выберите локальный ИИ "
+                "(KoboldCPP или LM Studio).",
+                "red",
+            )
+            return
+
+        cache = (
+            self.cache_ai
+            if options.cache_recovery_mode or options.engine == "ai"
+            else self.cache_std
+        )
+        active_caches = (
+            (self.cache_ai, self.cache_std)
+            if options.cache_recovery_mode
+            else (cache,)
+        )
+        process_mode = "force" if options.cache_recovery_mode else options.process_mode
 
         if options.engine == "deepl" and not self.config.get("API", "deepl_key").strip():
             self.on_log("❌ Введите ключ DeepL в настройках!", "red")
@@ -280,7 +302,7 @@ class TranslationJob:
             snbt,
             bq_files,
             target_lang=lang,
-            mode=options.process_mode,
+            mode=process_mode,
             translate_mods=options.translate_mods,
             translate_books=options.translate_books,
             translate_quests=options.translate_quests,
@@ -358,6 +380,12 @@ class TranslationJob:
                 ai_mode=options.ai_mode,
                 ai_batch=options.ai_batch,
                 ai_provider=options.ai_provider,
+                fallback_caches=(
+                    [("Google-кэш", self.cache_std)]
+                    if options.cache_recovery_mode
+                    else None
+                ),
+                force_google_fallback=options.cache_recovery_mode,
             )
             callbacks = self._callbacks()
             jar_proc = JarProcessor(service, self.state, callbacks)
@@ -369,6 +397,12 @@ class TranslationJob:
             self._reset_progress_status_throttle()
             self.state.begin_progress()
             self.on_log(f"🚀 ЗАПУСК ПЕРЕВОДА ({lang['name']})...\n", "yellow")
+            if options.cache_recovery_mode:
+                self.on_log(
+                    "🛠️ Восстановление: AI-кэш → Google-кэш → "
+                    "локальный ИИ → Google fallback",
+                    "cyan",
+                )
 
             for path, translate_mods, translate_books in jar_work:
                 if not self.state.should_run():
@@ -382,7 +416,7 @@ class TranslationJob:
                     lambda path=path: jar_proc.process(
                         path,
                         target_lang=lang,
-                        mode=options.process_mode,
+                        mode=process_mode,
                         output_mode=options.output_mode,
                         translate_mods=translate_mods,
                         translate_books=translate_books,
@@ -408,7 +442,7 @@ class TranslationJob:
                         path,
                         options.mc_dir,
                         target_lang=lang,
-                        mode=options.process_mode,
+                        mode=process_mode,
                         output_mode=options.output_mode,
                         pack_writer=pack_writer,
                     ),
@@ -426,7 +460,7 @@ class TranslationJob:
                     lambda path=path: snbt_proc.process(
                         path,
                         target_lang=lang,
-                        mode=options.process_mode,
+                        mode=process_mode,
                         selected_items=options.selected_items,
                     ),
                 )
@@ -443,7 +477,7 @@ class TranslationJob:
                     lambda path=path: bq_proc.process(
                         path,
                         target_lang=lang,
-                        mode=options.process_mode,
+                        mode=process_mode,
                     ),
                 )
 
@@ -459,7 +493,7 @@ class TranslationJob:
                     lambda path=path: heracles_proc.process(
                         path,
                         target_lang=lang,
-                        mode=options.process_mode,
+                        mode=process_mode,
                     ),
                 )
         except Exception:
@@ -471,7 +505,13 @@ class TranslationJob:
             )
         finally:
             try:
-                cache.save()
+                saved_cache_ids: set[int] = set()
+                for active_cache in active_caches:
+                    cache_id = id(active_cache)
+                    if cache_id in saved_cache_ids:
+                        continue
+                    active_cache.save()
+                    saved_cache_ids.add(cache_id)
             except Exception:
                 failed = True
                 self.on_log(

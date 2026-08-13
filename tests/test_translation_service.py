@@ -87,8 +87,24 @@ class _Engine(TranslationEngine):
 
 
 class _Service(TranslationService):
-    def __init__(self, engine, cache, config, *, engine_name="ai"):
-        super().__init__(engine_name, cache, config, ai_batch=20)
+    def __init__(
+        self,
+        engine,
+        cache,
+        config,
+        *,
+        engine_name="ai",
+        fallback_caches=None,
+        force_google_fallback=False,
+    ):
+        super().__init__(
+            engine_name,
+            cache,
+            config,
+            ai_batch=20,
+            fallback_caches=fallback_caches,
+            force_google_fallback=force_google_fallback,
+        )
         self.engine = engine
 
     def _build_engine(self, context="", prompt_type="mods"):
@@ -107,6 +123,55 @@ def _callbacks(logs, progress=None):
 
 
 class TranslationServiceRegressionTests(unittest.TestCase):
+    def test_cache_recovery_uses_valid_google_cache_after_invalid_ai_cache(self):
+        source = "Power: %s"
+        ai_cache = _MemoryCache()
+        google_cache = _MemoryCache()
+        ai_cache.values[("ru", source)] = "Мощность:"
+        google_cache.values[("ru", source)] = "Мощность: %s"
+        engine = _Engine(lambda _items: self.fail("local AI must be skipped"))
+        logs = []
+
+        result = _Service(
+            engine,
+            ai_cache,
+            _Config(),
+            fallback_caches=[("Google-кэш", google_cache)],
+        ).translate_dict(
+            {"key": source},
+            TARGET_LANG,
+            _callbacks(logs),
+        )
+
+        self.assertEqual(result, {"key": "Мощность: %s"})
+        self.assertEqual(ai_cache.discarded, [("ru", source, False)])
+        self.assertEqual(ai_cache.values[("ru", source)], "Мощность: %s")
+        self.assertEqual(engine.calls, [])
+        self.assertTrue(any("Google-кэш" in message for message, _ in logs))
+
+    def test_cache_recovery_forces_google_fallback_after_local_ai_failure(self):
+        source = "Herbalist Bench"
+        google = mock.Mock()
+        google.translate_batch.return_value = {"key": "Стол травника"}
+
+        with mock.patch(
+            "mineai.engines.service.GoogleEngine",
+            return_value=google,
+        ):
+            result = _Service(
+                _Engine(lambda _items: {}),
+                _MemoryCache(),
+                _Config(fallback_google=False),
+                force_google_fallback=True,
+            ).translate_dict(
+                {"key": source},
+                TARGET_LANG,
+                _callbacks([]),
+            )
+
+        self.assertEqual(result, {"key": "Стол травника"})
+        google.translate_batch.assert_called_once()
+
     def test_modonomicon_color_tokens_are_atomic_for_ai_and_google(self):
         source = "[#] (8B0000)Blood Wood[#] () is powerful."
         translated = "[#] (8B0000)Кровавая древесина[#] () очень прочна."
@@ -815,7 +880,29 @@ class TranslationServiceRegressionTests(unittest.TestCase):
 
 
 class TranslationCacheIdentityTests(unittest.TestCase):
-    def test_beta33_invalidates_beta32_ai_cache_automatically(self):
+    def test_any_ai_cache_version_preserves_valid_entries_during_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ai_cache.json")
+            with open(path, "w", encoding="utf-8") as stream:
+                json.dump(
+                    {
+                        "__mineai_ai_cache_validation_version__": "1",
+                        "ru_Description": "Описание",
+                        "ru_Power: %s": "Мощность:",
+                    },
+                    stream,
+                    ensure_ascii=False,
+                )
+
+            cache = TranslationCache(path)
+
+            self.assertEqual(
+                cache.get("ru", "Description"),
+                ("Описание", False),
+            )
+            self.assertTrue(os.path.exists(path + ".pre-auto-repair"))
+
+    def test_old_ai_cache_keeps_individually_valid_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "ai_cache.json")
             with open(path, "w", encoding="utf-8") as stream:
@@ -830,8 +917,11 @@ class TranslationCacheIdentityTests(unittest.TestCase):
 
             cache = TranslationCache(path)
 
-            self.assertEqual(cache.get("ru", "Exactly one"), (None, False))
-            self.assertTrue(os.path.exists(path + ".pre-beta33"))
+            self.assertEqual(
+                cache.get("ru", "Exactly one"),
+                ("не более одного", False),
+            )
+            self.assertTrue(os.path.exists(path + ".pre-auto-repair"))
 
     def test_identity_survives_reload_and_normalizes_newlines(self):
         with tempfile.TemporaryDirectory() as directory:

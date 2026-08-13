@@ -49,7 +49,7 @@ class AtomicWriteTests(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 self.assertNotIn("ru_" + source, json.load(handle))
 
-    def test_beta25_ai_cache_is_backed_up_and_invalidated_once(self):
+    def test_old_ai_cache_discards_individually_invalid_entry(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "ai_cache.json")
             with open(path, "w", encoding="utf-8") as handle:
@@ -62,7 +62,7 @@ class AtomicWriteTests(unittest.TestCase):
             cache = TranslationCache(path)
 
             self.assertEqual(cache.get("ru", "When fully upgraded."), (None, False))
-            self.assertTrue(os.path.exists(path + ".pre-beta33"))
+            self.assertTrue(os.path.exists(path + ".pre-auto-repair"))
             cache.set("ru", "Hello", "Привет")
             cache.save()
             reloaded = TranslationCache(path)
@@ -84,11 +84,11 @@ class AtomicWriteTests(unittest.TestCase):
             cache = TranslationCache(path)
 
             self.assertEqual(cache.get("ru", "Description"), ("Описание", False))
-            self.assertTrue(os.path.exists(path + ".pre-beta34"))
+            self.assertTrue(os.path.exists(path + ".pre-auto-repair"))
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(
                     json.load(handle)["__mineai_ai_cache_validation_version__"],
-                    "28",
+                    "29",
                 )
 
     def test_failed_replace_preserves_original_and_removes_temp_file(self):

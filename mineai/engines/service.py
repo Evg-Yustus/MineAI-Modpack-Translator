@@ -317,6 +317,8 @@ class TranslationService:
         ai_mode: str = "safe",
         ai_batch: int = 20,
         ai_provider: str = "local",
+        fallback_caches: list[tuple[str, TranslationCache]] | None = None,
+        force_google_fallback: bool = False,
     ) -> None:
         self.engine_name = engine_name
         self.cache = cache
@@ -325,6 +327,8 @@ class TranslationService:
         self.ai_mode = ai_mode
         self.ai_batch = ai_batch
         self.ai_provider = ai_provider
+        self.fallback_caches = list(fallback_caches or ())
+        self.force_google_fallback = force_google_fallback
         self._ai_http_session = requests.Session() if engine_name == "ai" else None
 
     def _build_engine(
@@ -413,6 +417,12 @@ class TranslationService:
         imported_count = 0
         deduplicated_count = 0
         repaired_cache_count = 0
+        repaired_caches: set[TranslationCache] = set()
+        fallback_cache_hits: dict[str, int] = {}
+
+        def cache_layers():
+            yield "", self.cache
+            yield from self.fallback_caches
 
         def validate(
             owner_key: str,
@@ -496,16 +506,34 @@ class TranslationService:
                     text,
                     (cache_contexts or {}).get(key, ""),
                 )
-                hit, is_imported = self.cache.get(
-                    target_lang["api"],
-                    technical_cache_source,
-                )
+                hit = None
+                is_imported = False
+                cache_label = ""
+                hit_cache = self.cache
+                for candidate_label, candidate_cache in cache_layers():
+                    hit, is_imported = candidate_cache.get(
+                        target_lang["api"],
+                        technical_cache_source,
+                    )
+                    if hit is not None:
+                        cache_label = candidate_label
+                        hit_cache = candidate_cache
+                        break
                 result[key] = text
                 if hit is not None:
                     if is_imported:
                         imported_count += 1
+                    elif hit_cache is not self.cache:
+                        fallback_cache_hits[cache_label] = (
+                            fallback_cache_hits.get(cache_label, 0) + 1
+                        )
                     else:
                         cached_count += 1
+                    if hit_cache is not self.cache:
+                        self.cache.set_identity(
+                            target_lang["api"],
+                            technical_cache_source,
+                        )
                     metric("ok")
                     metric("cached")
                 else:
@@ -523,29 +551,53 @@ class TranslationService:
                 (cache_contexts or {}).get(key, ""),
             )
 
-            hit, is_imported = self.cache.get(target_lang["api"], cache_source)
-            if hit is not None:
-                valid, reason, _id = validate(key, item, hit)
+            cache_accepted = False
+            for cache_label, candidate_cache in cache_layers():
+                hit, is_imported = candidate_cache.get(
+                    target_lang["api"],
+                    cache_source,
+                )
+                if hit is None:
+                    continue
+                valid, reason, identity = validate(key, item, hit)
                 if valid:
                     result[key] = hit
                     if is_imported:
                         imported_count += 1
+                    elif candidate_cache is not self.cache:
+                        fallback_cache_hits[cache_label] = (
+                            fallback_cache_hits.get(cache_label, 0) + 1
+                        )
                     else:
                         cached_count += 1
+                    if candidate_cache is not self.cache:
+                        if identity:
+                            self.cache.set_identity(
+                                target_lang["api"], cache_source
+                            )
+                        else:
+                            self.cache.set(
+                                target_lang["api"], cache_source, hit
+                            )
                     bump()
                     metric("ok")
                     metric("cached")
-                    continue
+                    cache_accepted = True
+                    break
                 callbacks.on_log(
-                    f"⚠️ Запись кэша отброшена для {text[:70]!r}: {reason}",
+                    f"⚠️ Запись {cache_label or 'кэша'} отброшена "
+                    f"для {text[:70]!r}: {reason}",
                     "yellow",
                 )
-                self.cache.discard(
+                candidate_cache.discard(
                     target_lang["api"],
                     cache_source,
                     include_imported=is_imported,
                 )
+                repaired_caches.add(candidate_cache)
                 repaired_cache_count += 1
+            if cache_accepted:
+                continue
 
             if not masked:
                 result[key] = text
@@ -568,6 +620,8 @@ class TranslationService:
             callbacks.on_log(f"   🗃️ Из кэша: {cached_count}", "gray")
         if imported_count:
             callbacks.on_log(f"   📦 Из ресурс-паков: {imported_count}", "cyan")
+        for cache_label, count in fallback_cache_hits.items():
+            callbacks.on_log(f"   🗃️ Из {cache_label}: {count}", "gray")
         if deduplicated_count:
             callbacks.on_log(
                 f"   ♻️ Дедупликация, объединены: {deduplicated_count}", "dim"
@@ -715,7 +769,9 @@ class TranslationService:
 
         failed_pending = {k: v for k, v in pending.items() if k not in accepted}
         try:
-            use_fallback = self.config.getboolean("AI", "fallback_google")
+            use_fallback = self.force_google_fallback or self.config.getboolean(
+                "AI", "fallback_google"
+            )
         except Exception:
             use_fallback = False
 
@@ -884,7 +940,10 @@ class TranslationService:
             metric("failed", len(output_keys))
 
         if repaired_cache_count:
-            self.cache.save()
+            for repaired_cache in repaired_caches:
+                repaired_cache.save()
+            if self.cache not in repaired_caches:
+                self.cache.save_if_threshold()
             callbacks.on_log(
                 "🧹 Кэш автоматически исправлен: "
                 f"{repaired_cache_count} некорректных записей",

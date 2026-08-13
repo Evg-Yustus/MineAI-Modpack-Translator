@@ -290,6 +290,18 @@ def translation_length_issue(source: str, candidate: str) -> str | None:
     """Reject only extreme truncation/expansion typical of batched row smearing."""
     source_length = len(re.sub(r"\s+", " ", source).strip())
     candidate_length = len(re.sub(r"\s+", " ", candidate).strip())
+    source_words = re.findall(r"[A-Za-zА-Яа-яЁё]+", source)
+    candidate_words = re.findall(r"[A-Za-zА-Яа-яЁё]+", candidate)
+    if (
+        source_length >= 18
+        and len(source_words) >= 3
+        and len(candidate_words) <= 1
+        and candidate_length < int(source_length * 0.40)
+    ):
+        return (
+            f"подозрительно короткий перевод ({candidate_length} при оригинале "
+            f"{source_length})"
+        )
     if source_length >= 40 and candidate_length < max(12, int(source_length * 0.30)):
         return (
             f"подозрительно короткий перевод ({candidate_length} при оригинале "

@@ -112,6 +112,8 @@ class TranslatorQtWindow(QMainWindow):
         self.cache_std, self.cache_ai, polish_total = load_both_caches()
         self._job: TranslationJob | None = None
         self._worker: threading.Thread | None = None
+        self._ui_locked = False
+        self._fallback_before_cache_recovery: bool | None = None
         self._closing = False
         self._allow_close = False
         self._runtime_ended_at: float | None = None
@@ -443,6 +445,16 @@ class TranslatorQtWindow(QMainWindow):
             mode_row.addWidget(button, 1)
         card.body.addLayout(mode_row)
 
+        self.cache_recovery_checkbox = QCheckBox(t("mode.cache_recovery"))
+        self.cache_recovery_checkbox.setToolTip(t("tooltip.cache_recovery"))
+        self.cache_recovery_checkbox.setChecked(
+            settings.getboolean("GENERAL", "cache_recovery_mode")
+        )
+        self.cache_recovery_checkbox.stateChanged.connect(
+            self._cache_recovery_changed
+        )
+        card.body.addWidget(self.cache_recovery_checkbox)
+
         output_label = QLabel(t("field.output"))
         output_label.setObjectName("FieldLabel")
         card.body.addWidget(output_label)
@@ -748,6 +760,7 @@ class TranslatorQtWindow(QMainWindow):
                 break
         self.ai_fallback.setChecked(settings.getboolean("AI", "fallback_google"))
         self._engine_changed(self.engine_combo.currentText())
+        self._cache_recovery_changed()
 
     def _select_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, t("dialog.minecraft_folder"), settings.get("GENERAL", "mc_dir"))
@@ -789,6 +802,30 @@ class TranslatorQtWindow(QMainWindow):
         self.google_options.setVisible(engine == "google")
         self.ai_options.setVisible(engine == "ai")
         self._refresh_engine_state()
+        self._refresh_system_readiness()
+
+    def _cache_recovery_changed(self, *_args) -> None:
+        enabled = self.cache_recovery_checkbox.isChecked()
+        settings.set("GENERAL", "cache_recovery_mode", enabled)
+
+        if enabled:
+            if self._fallback_before_cache_recovery is None:
+                self._fallback_before_cache_recovery = self.ai_fallback.isChecked()
+            current_spec = ENGINE_OPTIONS.get(self.engine_combo.currentText())
+            if current_spec not in {("ai", "local"), ("ai", "lmstudio")}:
+                for index in range(self.engine_combo.count()):
+                    label = self.engine_combo.itemText(index)
+                    if ENGINE_OPTIONS.get(label) == ("ai", "local"):
+                        self.engine_combo.setCurrentIndex(index)
+                        break
+            self.ai_fallback.setChecked(True)
+        elif self._fallback_before_cache_recovery is not None:
+            self.ai_fallback.setChecked(self._fallback_before_cache_recovery)
+            self._fallback_before_cache_recovery = None
+
+        for button in self.mode_buttons.values():
+            button.setEnabled(not self._ui_locked and not enabled)
+        self.ai_fallback.setEnabled(not self._ui_locked and not enabled)
         self._refresh_system_readiness()
 
     def _refresh_engine_state(self) -> None:
@@ -915,6 +952,7 @@ class TranslatorQtWindow(QMainWindow):
                 if self._analysis_ready
                 else None
             ),
+            cache_recovery_mode=self.cache_recovery_checkbox.isChecked(),
         )
 
     def _validate_preflight(self, *, translation: bool) -> bool:
@@ -1057,6 +1095,7 @@ class TranslatorQtWindow(QMainWindow):
         self._set_status(t("status.stopping"), None)
 
     def _lock_ui(self, locked: bool) -> None:
+        self._ui_locked = locked
         for widget in (
             self.settings_button,
             self.prompts_button,
@@ -1074,17 +1113,22 @@ class TranslatorQtWindow(QMainWindow):
             self.output_rp,
             self.output_inplace,
             self.analysis_configure_button,
+            self.cache_recovery_checkbox,
         ):
             widget.setEnabled(not locked)
         for button in self.mode_buttons.values():
-            button.setEnabled(not locked)
+            button.setEnabled(
+                not locked and not self.cache_recovery_checkbox.isChecked()
+            )
         self.pause_button.setEnabled(locked)
         self.stop_button.setEnabled(locked)
         self.pack_name.setEnabled((not locked) and self.output_rp.isChecked())
         self.google_mode_combo.setEnabled(not locked)
         self.ai_mode_combo.setEnabled(not locked)
         self.ai_batch_spin.setEnabled(not locked)
-        self.ai_fallback.setEnabled(not locked)
+        self.ai_fallback.setEnabled(
+            not locked and not self.cache_recovery_checkbox.isChecked()
+        )
         if not locked:
             self.pause_button.setText(t("button.pause"))
 
@@ -1363,6 +1407,7 @@ class TranslatorQtWindow(QMainWindow):
             "ai_mode": self.ai_mode_combo.currentData(),
             "ai_batch": self.ai_batch_spin.value(),
             "fallback": self.ai_fallback.isChecked(),
+            "cache_recovery": self.cache_recovery_checkbox.isChecked(),
             "scope": (self.scope_mods.isChecked(), self.scope_books.isChecked(), self.scope_quests.isChecked()),
             "mode": self._mode_value(),
             "resourcepack": self.output_rp.isChecked(),
@@ -1406,6 +1451,8 @@ class TranslatorQtWindow(QMainWindow):
             self.ai_mode_combo.setCurrentIndex(ai_index)
         self.ai_batch_spin.setValue(int(state["ai_batch"]))
         self.ai_fallback.setChecked(bool(state["fallback"]))
+        self.cache_recovery_checkbox.setChecked(bool(state["cache_recovery"]))
+        self._cache_recovery_changed()
         for checkbox, checked in zip((self.scope_mods, self.scope_books, self.scope_quests), state["scope"]):
             checkbox.setChecked(bool(checked))
         self.mode_buttons[str(state["mode"])].setChecked(True)

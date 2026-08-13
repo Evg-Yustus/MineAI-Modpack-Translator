@@ -53,6 +53,19 @@ class RichTextFormatTests(unittest.TestCase):
         self.assertEqual(result.count("$()"), 2)
         self.assertNotIn("[#", result)
 
+    def test_json_book_color_reset_keeps_sentence_separator(self):
+        template = parse_rich_text("Colored §2word§r. Next sentence.")
+        payload, anchors = template.translation_payload()
+        tokens = tuple(anchor.token for anchor in anchors)
+        candidate = (
+            f"Цветное {tokens[0]}слово{tokens[1]}Следующее предложение."
+        )
+
+        self.assertEqual(
+            template.render_translation(candidate),
+            "Цветное §2слово§r. Следующее предложение.",
+        )
+
     def test_guideme_tag_and_markdown_link_are_never_exposed_as_text(self):
         source = (
             '<ItemLink id="ae2:controller" /> Read '

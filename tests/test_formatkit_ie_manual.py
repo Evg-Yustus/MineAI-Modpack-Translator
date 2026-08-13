@@ -54,6 +54,26 @@ class ImmersiveEngineeringAdapterTests(unittest.TestCase):
         self.assertNotIn("§", payload)
         self.assertNotIn("<br>", payload)
 
+    def test_color_reset_keeps_following_sentence_separator(self) -> None:
+        source = "Colored §2word§r. Next sentence.\n"
+        plan = self.registry.plan(
+            "assets/immersiveengineering/manual/en_us/railgun.txt",
+            source,
+            "ru_ru",
+        )
+        unit = plan.units[0]
+        tokens = unit.anchor_tokens
+        candidate = (
+            f"Цветное {tokens[0]}слово{tokens[1]}Следующее предложение."
+        )
+
+        result = plan.apply({unit.id: candidate})
+
+        self.assertEqual(
+            result.text,
+            "Цветное §2слово§r. Следующее предложение.\n",
+        )
+
     def test_ie_target_path_uses_plain_locale(self) -> None:
         plan = self.registry.plan(
             "assets/immersiveengineering/manual/en_us/page.txt",

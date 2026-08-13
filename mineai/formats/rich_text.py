@@ -9,7 +9,10 @@ from formatkit.contracts import (
     ProtectedAnchor,
     normalize_anchor_boundaries,
 )
-from formatkit.tokenizer import MODONOMICON_STYLE_SOURCE
+from formatkit.tokenizer import (
+    MODONOMICON_STYLE_SOURCE,
+    STYLE_RESET_BOUNDARY_SOURCE,
+)
 from mineai.constants import IGNORE_TERMS
 from mineai.text_processing import (
     COMPOUND_TECHNICAL_TOKEN_PATTERN,
@@ -39,6 +42,7 @@ _IMMUTABLE_PATTERN = re.compile(
     r"\([a-z0-9_.-]+:[a-z0-9_./-]+\))|"
     r"(?P<markdown_open>!\[|\[)|"
     r"(?P<escape>\\[^\r\n])|"
+    rf"(?P<style_reset_boundary>{STYLE_RESET_BOUNDARY_SOURCE})|"
     r"(?P<minecraft_code>[&§]x(?:[&§][0-9a-f]){6}|"
     r"&#[0-9a-f]{6}|[&§][0-9a-fk-or])|"
     r"(?P<placeholder>#[A-Za-z_][A-Za-z0-9_.:/-]*#|\{[^}\r\n]+\}|"

@@ -54,6 +54,27 @@ class PlainTextBookAdapterTests(unittest.TestCase):
             self.assertNotIn(protected, payload)
         self.assertEqual(plan.apply({}).text, source)
 
+    def test_markdown_color_reset_owns_its_sentence_separator(self) -> None:
+        source = "Colored §2word§r. Next sentence.\n"
+        plan = self.registry.plan(
+            "assets/demo/guide/en_us/page.md",
+            source,
+            "ru_ru",
+        )
+        unit = plan.units[0]
+        tokens = unit.anchor_tokens
+
+        result = plan.apply({
+            unit.id: (
+                f"Цветное {tokens[0]}слово{tokens[1]}Следующее предложение."
+            )
+        })
+
+        self.assertEqual(
+            result.text,
+            "Цветное §2слово§r. Следующее предложение.\n",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

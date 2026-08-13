@@ -30,22 +30,22 @@ if errorlevel 1 (
 echo    Все файлы корректны.
 
 echo [3/4] PyInstaller...
-python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta34.spec
+python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta36.spec
 if errorlevel 1 (
     echo Ошибка сборки.
     if not defined CI pause
     exit /b 1
 )
 
-if not exist "dist\MineAI_Translator_Beta34.exe" (
-    echo Ошибка: dist\MineAI_Translator_Beta34.exe не создан.
+if not exist "dist\MineAI_Translator_Beta36.exe" (
+    echo Ошибка: dist\MineAI_Translator_Beta36.exe не создан.
     if not defined CI pause
     exit /b 1
 )
 
 echo.
 echo [4/4] Готово!
-echo    EXE: dist\MineAI_Translator_Beta34.exe
+echo    EXE: dist\MineAI_Translator_Beta36.exe
 echo.
 echo Рядом с EXE положите при необходимости:
 echo    settings.ini, dictionary.json, cache.json
