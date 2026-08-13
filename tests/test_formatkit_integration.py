@@ -144,6 +144,117 @@ class FormatKitJarIntegrationTests(unittest.TestCase):
         output = writer.files["assets/example/lang/ru_ru.lang"].decode("utf-8")
         self.assertEqual(output, "example.resources=Ресурсы\n")
 
+    def test_json_lang_uses_sdk_units_and_preserves_source_serialization(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        jar_path = Path(temp.name) / "locale.jar"
+        source = '{\n\t"item.example.name": "Resources %s"\n}\n'
+        self._jar(
+            jar_path,
+            {"assets/example/lang/en_us.json": source},
+        )
+        service = _FormatKitService()
+        writer = _Writer()
+
+        JarProcessor(service, _state(), _callbacks()).process(
+            str(jar_path),
+            target_lang=TARGET_LANG,
+            mode="force",
+            output_mode="resourcepack",
+            translate_mods=True,
+            translate_books=False,
+            pack_writer=writer,
+        )
+
+        output = writer.files["assets/example/lang/ru_ru.json"].decode("utf-8")
+        self.assertEqual(
+            output,
+            '{\n\t"item.example.name": "Ресурсы %s"\n}\n',
+        )
+        payload = next(value for call in service.calls for value in call.values())
+        self.assertIn("[#0#]", payload)
+
+    def test_patchouli_json_uses_sdk_without_sending_markup_to_engine(self) -> None:
+        source_path = (
+            "data/example/patchouli_books/guide/en_us/entries/start.json"
+        )
+        source = (
+            '{\n\t"name": "Resources",\n'
+            '\t"pages": [{"type": "patchouli:text", '
+            '"text": "Resources $(item)minecraft:stone$()"}]\n}\n'
+        )
+
+        service, writer = self._process({source_path: source})
+
+        target_path = (
+            "data/example/patchouli_books/guide/ru_ru/entries/start.json"
+        )
+        output = writer.files[target_path].decode("utf-8")
+        self.assertTrue(output.startswith('{\n\t"name"'))
+        self.assertIn('"name": "Ресурсы"', output)
+        self.assertIn("$(item)minecraft:stone$()", output)
+        payloads = [value for call in service.calls for value in call.values()]
+        self.assertTrue(any("[#0#]" in value for value in payloads))
+        self.assertTrue(all("$(item)" not in value for value in payloads))
+
+    def test_oracle_index_mdx_is_discovered_and_written_to_locale_tree(self) -> None:
+        source_path = "assets/demo/oracle_index/books/guide/index.mdx"
+        source = "# Resources\n\nResources.\n"
+
+        service, writer = self._process({source_path: source})
+
+        target_path = (
+            "assets/demo/oracle_index/books/guide/"
+            ".translated/ru_ru/index.mdx"
+        )
+        output = writer.files[target_path].decode("utf-8")
+        self.assertEqual(output, "# Ресурсы\n\nРесурсы.\n")
+        self.assertTrue(service.calls)
+
+    def test_conflicting_duplicate_locale_falls_back_to_beta36_parser(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        jar_path = Path(temp.name) / "duplicate-locale.jar"
+        self._jar(
+            jar_path,
+            {
+                "assets/example/lang/en_us.json": (
+                    '{"example.name":"Old",'
+                    '"example.name":"Resources"}'
+                )
+            },
+        )
+        service = _FormatKitService()
+        writer = _Writer()
+
+        JarProcessor(service, _state(), _callbacks()).process(
+            str(jar_path),
+            target_lang=TARGET_LANG,
+            mode="force",
+            output_mode="resourcepack",
+            translate_mods=True,
+            translate_books=False,
+            pack_writer=writer,
+        )
+
+        output = json.loads(writer.files["assets/example/lang/ru_ru.json"])
+        self.assertEqual(output, {"example.name": "Ресурсы"})
+
+    def test_legacy_patchouli_string_pages_fall_back_to_beta36_parser(self) -> None:
+        source_path = (
+            "data/example/patchouli_books/guide/en_us/entries/legacy.json"
+        )
+        source = '{"name":"Resources","pages":["Resources"]}'
+
+        _service, writer = self._process({source_path: source})
+
+        target_path = (
+            "data/example/patchouli_books/guide/ru_ru/entries/legacy.json"
+        )
+        output = json.loads(writer.files[target_path])
+        self.assertEqual(output["name"], "Ресурсы")
+        self.assertEqual(output["pages"], ["Ресурсы"])
+
     def test_guideme_relocated_document_copies_non_text_dependencies(self) -> None:
         source_path = "assets/ae2/ae2guide/getting-started.md"
         structure_path = (

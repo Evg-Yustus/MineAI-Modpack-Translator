@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from formatkit import FormatRegistry
+from formatkit.adapters.modonomicon import build_localized_overlay
 from mineai.engines.base import EngineCallbacks
 from mineai.processors.book_paths import MarkdownBookLocator
 from mineai.processors.analyzer import ModpackAnalyzer
@@ -57,6 +58,10 @@ class _Writer:
         self.files: dict[str, bytes] = {}
 
     def write(self, path: str, payload: bytes) -> None:
+        if path in self.files and "/lang/" in path:
+            merged = json.loads(self.files[path])
+            merged.update(json.loads(payload))
+            payload = json.dumps(merged, ensure_ascii=False).encode("utf-8")
         self.files[path] = payload
 
 
@@ -224,6 +229,28 @@ class ModonomiconAdapterTests(unittest.TestCase):
 
 
 class ModonomiconJarIntegrationTests(unittest.TestCase):
+    def test_generated_description_ids_do_not_depend_on_translation(self) -> None:
+        path = (
+            "data/paganbless/modonomicon/books/pagan_guide/"
+            "entries/features/herbalist_bench.json"
+        )
+        source = '{"name":"Herbalist Bench","description":"Watch out!"}'
+        first = '{"name":"Стол травника","description":"Осторожно!"}'
+        second = '{"name":"Верстак травника","description":"Берегитесь!"}'
+
+        first_overlay = build_localized_overlay(path, source, first, "ru_ru")
+        second_overlay = build_localized_overlay(path, source, second, "ru_ru")
+
+        self.assertEqual(first_overlay.data_text, second_overlay.data_text)
+        self.assertEqual(
+            set(first_overlay.source_entries),
+            set(second_overlay.source_entries),
+        )
+        self.assertNotEqual(
+            first_overlay.target_entries,
+            second_overlay.target_entries,
+        )
+
     def test_lenient_multiline_source_is_written_as_strict_json(self) -> None:
         entry_path = (
             "data/paganbless/modonomicon/books/pagan_guide/"
@@ -252,8 +279,25 @@ class ModonomiconJarIntegrationTests(unittest.TestCase):
             )
 
         output = json.loads(writer.files[entry_path])
-        self.assertEqual(output["name"], HERBALIST)
-        self.assertIn("Keep your fingers safe", output["pages"][0]["text"])
+        name_key = (
+            "mineai.book.paganbless.pagan_guide.entries.features."
+            "herbalist_bench.name"
+        )
+        text_key = (
+            "mineai.book.paganbless.pagan_guide.entries.features."
+            "herbalist_bench.pages.page_0.text"
+        )
+        self.assertEqual(output["name"], name_key)
+        self.assertEqual(output["pages"][0]["text"], text_key)
+        source_lang = json.loads(
+            writer.files["assets/paganbless/lang/en_us.json"]
+        )
+        target_lang = json.loads(
+            writer.files["assets/paganbless/lang/ru_ru.json"]
+        )
+        self.assertEqual(source_lang[name_key], "Herbalist Bench")
+        self.assertIn("Keep your fingers safe", source_lang[text_key])
+        self.assertEqual(target_lang[name_key], HERBALIST)
 
     def test_literal_pages_go_to_datapack_and_book_lang_keys_to_resourcepack(
         self,
@@ -333,16 +377,39 @@ class ModonomiconJarIntegrationTests(unittest.TestCase):
         self.assertEqual(analyzed, estimated)
         self.assertIn(entry_path, writer.files)
         output = json.loads(writer.files[entry_path])
-        self.assertEqual(output["name"], HERBALIST)
-        self.assertEqual(output["description"], FINGERS)
-        self.assertEqual(output["pages"][0]["text"], CUT_HERBS)
+        name_key = (
+            "mineai.book.paganbless.pagan_guide.entries.features."
+            "herbalist_bench.name"
+        )
+        description_key = (
+            "mineai.book.paganbless.pagan_guide.entries.features."
+            "herbalist_bench.description"
+        )
+        page_key = (
+            "mineai.book.paganbless.pagan_guide.entries.features."
+            "herbalist_bench.pages.page_0.text"
+        )
+        self.assertEqual(output["name"], name_key)
+        self.assertEqual(output["description"], description_key)
+        self.assertEqual(output["pages"][0]["text"], page_key)
         lang_path = "assets/paganbless/lang/ru_ru.json"
         self.assertIn(lang_path, writer.files)
         lang = json.loads(writer.files[lang_path])
         self.assertEqual(
             lang,
-            {"book.paganbless.pagan_guide.name": PAGAN_GUIDE},
+            {
+                "book.paganbless.pagan_guide.name": PAGAN_GUIDE,
+                name_key: HERBALIST,
+                description_key: FINGERS,
+                page_key: CUT_HERBS,
+            },
         )
+        source_lang = json.loads(
+            writer.files["assets/paganbless/lang/en_us.json"]
+        )
+        self.assertEqual(source_lang[name_key], "Herbalist Bench")
+        self.assertEqual(source_lang[description_key], "Watch your fingers!")
+        self.assertEqual(source_lang[page_key], "Cut the herbs.")
 
 
 if __name__ == "__main__":

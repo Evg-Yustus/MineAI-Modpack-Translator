@@ -24,6 +24,11 @@ _TRANSLATABLE_KEY = re.compile(
 _LOCALIZATION_KEY = re.compile(
     r"^(?=[a-z0-9_./-]*\.)[a-z0-9_-]+(?:[./][a-z0-9_-]+)+$"
 )
+_BOOK_RESOURCE_PATH = re.compile(
+    r"(?:^|/)data/(?P<namespace>[^/]+)/modonomicon/books/"
+    r"(?P<book>[^/]+)/(?P<relative>.+)\.json$",
+    re.IGNORECASE,
+)
 
 
 def is_modonomicon_path(logical_path: str) -> bool:
@@ -37,6 +42,15 @@ class _StringToken:
     end: int
     value: str
     is_key: bool
+
+
+@dataclass(frozen=True)
+class ModonomiconLocalization:
+    data_text: str
+    source_lang_path: str
+    target_lang_path: str
+    source_entries: dict[str, str]
+    target_entries: dict[str, str]
 
 
 def _decode_string(raw: str) -> str:
@@ -156,6 +170,87 @@ class _JsonWalker:
 
 def _is_selected_path(path: tuple[str | int, ...]) -> bool:
     return bool(path and isinstance(path[-1], str) and _TRANSLATABLE_KEY.fullmatch(path[-1]))
+
+
+def _description_id(
+    logical_path: str,
+    value_path: tuple[str | int, ...],
+) -> tuple[str, str]:
+    normalized = logical_path.replace("\\", "/")
+    match = _BOOK_RESOURCE_PATH.search(normalized)
+    if match is None:
+        raise ValueError(f"Unsupported Modonomicon book path: {logical_path}")
+
+    def clean(value: object) -> str:
+        text = re.sub(r"[^a-z0-9_-]+", "_", str(value).casefold())
+        return text.strip("_") or "value"
+
+    relative = match.group("relative").split("/")
+    field_parts = [
+        f"page_{part}" if isinstance(part, int) else clean(part)
+        for part in value_path
+    ]
+    parts = (
+        "mineai",
+        "book",
+        clean(match.group("namespace")),
+        clean(match.group("book")),
+        *(clean(part) for part in relative),
+        *field_parts,
+    )
+    return match.group("namespace"), ".".join(parts)
+
+
+def build_localized_overlay(
+    logical_path: str,
+    source_text: str,
+    translated_text: str,
+    target_locale: str,
+) -> ModonomiconLocalization:
+    """Move literal book text into stable language keys without reformatting JSON."""
+    source_tokens = _JsonWalker(source_text).walk()
+    target_by_path = {
+        token.path: token
+        for token in _JsonWalker(translated_text).walk()
+        if not token.is_key
+    }
+    replacements: list[tuple[int, int, str]] = []
+    source_entries: dict[str, str] = {}
+    target_entries: dict[str, str] = {}
+    namespace = ""
+    for token in source_tokens:
+        if token.is_key or not _is_selected_path(token.path):
+            continue
+        source_value = token.value.strip()
+        if not source_value or _LOCALIZATION_KEY.fullmatch(source_value):
+            continue
+        target_token = target_by_path.get(token.path)
+        if target_token is None:
+            raise ValueError(f"Missing translated Modonomicon field: {token.path!r}")
+        namespace, description_id = _description_id(logical_path, token.path)
+        source_entries[description_id] = token.value
+        target_entries[description_id] = target_token.value
+        replacements.append(
+            (
+                token.start,
+                token.end,
+                json.dumps(description_id, ensure_ascii=False),
+            )
+        )
+
+    data_text = source_text
+    for start, end, replacement in reversed(replacements):
+        data_text = data_text[:start] + replacement + data_text[end:]
+    report = _validator(source_text, data_text)
+    if not report.ok:
+        raise ValueError("; ".join(report.errors))
+    return ModonomiconLocalization(
+        data_text=data_text,
+        source_lang_path=f"assets/{namespace}/lang/en_us.json",
+        target_lang_path=f"assets/{namespace}/lang/{target_locale}.json",
+        source_entries=source_entries,
+        target_entries=target_entries,
+    )
 
 
 def _normalized_structure(text: str) -> tuple[object, ...]:

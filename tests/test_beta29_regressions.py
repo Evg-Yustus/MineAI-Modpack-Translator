@@ -61,8 +61,8 @@ class _TranslationServiceStub:
 
 
 class StructuredDocumentRegressionTests(unittest.TestCase):
-    def test_release_version_is_beta36(self) -> None:
-        self.assertEqual(__version__, "10.0.0 - BETAv36")
+    def test_release_version_is_beta37(self) -> None:
+        self.assertEqual(__version__, "10.0.0 - BETAv38")
 
     def test_common_structured_document_module_exists(self) -> None:
         self.assertIsNotNone(importlib.util.find_spec("mineai.formats.document"))
@@ -200,7 +200,17 @@ class JsonBookAnalyzerRegressionTests(unittest.TestCase):
             with zipfile.ZipFile(jar_path, "w") as archive:
                 archive.writestr(
                     "assets/demo/patchouli_books/manual/en_us/entries/page.json",
-                    json.dumps({"title": "GUI", "text": "Translate this text"}),
+                    json.dumps(
+                        {
+                            "title": "GUI",
+                            "pages": [
+                                {
+                                    "type": "patchouli:text",
+                                    "text": "Translate this text",
+                                }
+                            ],
+                        }
+                    ),
                 )
 
             analyzer = ModpackAnalyzer(_state())

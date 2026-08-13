@@ -307,12 +307,15 @@ class MarkdownDocumentSafetyTests(unittest.TestCase):
                 pack_writer=_Writer(),
             )
 
-        self.assertEqual([kind for kind, _strings, _kwargs in service.calls], [
-            "plain",
-            "formatted",
-        ])
+        self.assertEqual(
+            [kind for kind, _strings, _kwargs in service.calls],
+            ["plain", "plain"],
+        )
         self.assertEqual(service.calls[0][2].get("prompt_type", "mods"), "mods")
         self.assertEqual(service.calls[1][2]["prompt_type"], "books")
+        book_payload = next(iter(service.calls[1][1].values()))
+        self.assertIn("[#0#]", book_payload)
+        self.assertNotIn("$(#ED7014)", book_payload)
 
     def test_skip_mode_rebuilds_existing_translation_with_source_endings(self) -> None:
         source_path = "assets/demo/guide/en_us/page.md"

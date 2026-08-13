@@ -8,7 +8,10 @@ from formatkit import (
     FormatValidationError,
     relocated_dependencies,
 )
-from formatkit.adapters.modonomicon import is_modonomicon_path
+from formatkit.adapters.modonomicon import (
+    build_localized_overlay,
+    is_modonomicon_path,
+)
 from mineai.engines.base import EngineCallbacks
 from mineai.engines.service import TranslationService
 from mineai.json_utils import (
@@ -149,6 +152,17 @@ class JarProcessor:
                         markdown_target = book_locator.target_path(item.filename)
                         is_book_md = markdown_target is not None
                         is_modonomicon = is_modonomicon_path(item.filename)
+                        upstream_adapter_id = (
+                            self.format_registry.upstream_adapter_id(
+                                item.filename
+                            )
+                        )
+                        upstream_target = (
+                            self.format_registry.upstream_target_path(
+                                item.filename,
+                                target_lang["file"],
+                            )
+                        )
                         legacy_lang_target = legacy_lang_target_path(
                             item.filename,
                             target_lang["file"],
@@ -225,6 +239,54 @@ class JarProcessor:
                                 content_label="Книга Modonomicon",
                                 copy_when_empty=False,
                             )
+                        elif (
+                            translate_books
+                            and upstream_adapter_id == "patchouli-book-json"
+                            and upstream_target
+                            and self._formatkit_ready(
+                                zin,
+                                item,
+                                target_lang,
+                                upstream_target,
+                            )
+                        ):
+                            modified |= self._process_book_md(
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
+                                written_inplace,
+                                upstream_target,
+                                content_label="Книга Patchouli",
+                            )
+                        elif (
+                            translate_books
+                            and upstream_adapter_id
+                            in {
+                                "oracle-index-mdx",
+                                "oracle-index-meta-json",
+                            }
+                            and upstream_target
+                        ):
+                            modified |= self._process_book_md(
+                                zin,
+                                zout,
+                                item,
+                                locale_files,
+                                target_lang,
+                                mode,
+                                output_mode,
+                                pack_writer,
+                                mod_name,
+                                written_inplace,
+                                upstream_target,
+                                content_label="Книга Oracle Index",
+                            )
                         elif translate_books and is_book_json:
                             modified |= self._process_book_json(
                                 zin,
@@ -298,6 +360,54 @@ class JarProcessor:
         self, zin, zout, item, locale_files, target_file, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace,
     ) -> bool:
+        tr_path = minecraft_lang_json_target_path(
+            item.filename,
+            target_lang["file"],
+        )
+        if tr_path is None:
+            return False
+        try:
+            source_text = zin.read(item).decode("utf-8-sig", errors="ignore")
+            self.format_registry.plan(
+                item.filename,
+                source_text,
+                target_lang["file"],
+                target_path_hint=tr_path,
+            )
+        except (OSError, ValueError, FormatValidationError):
+            return self._process_lang_entry_legacy(
+                zin,
+                zout,
+                item,
+                locale_files,
+                target_file,
+                target_lang,
+                mode,
+                output_mode,
+                pack_writer,
+                mod_name,
+                written_inplace,
+            )
+        return self._process_book_md(
+            zin,
+            zout,
+            item,
+            locale_files,
+            target_lang,
+            mode,
+            output_mode,
+            pack_writer,
+            mod_name,
+            written_inplace,
+            tr_path,
+            prompt_type="mods",
+            content_label="Интерфейс JSON",
+        )
+
+    def _process_lang_entry_legacy(
+        self, zin, zout, item, locale_files, target_file, target_lang, mode,
+        output_mode, pack_writer, mod_name, written_inplace,
+    ) -> bool:
         tr_path = re.sub(
             r"en_us\.json$",
             target_file,
@@ -326,7 +436,6 @@ class JarProcessor:
         total_translatable = count_translatable_lang_entries(en_data)
         if total_translatable == 0:
             return False
-
         if mode == "skip" and skip_threshold_reached(
             total_translatable,
             len(pending),
@@ -347,21 +456,20 @@ class JarProcessor:
         for key, value in tr_data.items():
             if key in merged and isinstance(merged[key], str) and value:
                 merged[key] = value
-
         if pending:
             self.callbacks.on_log(
-                f"⚡ Перевод {mod_name} [Интерфейс] — {len(pending)} строк",
+                f"⚡ Перевод {mod_name} [Интерфейс fallback] — "
+                f"{len(pending)} строк",
                 "cyan",
             )
-            translated = self.service.translate_dict(
-                pending,
-                target_lang,
-                self.callbacks,
-                context=mod_name,
+            merged.update(
+                self.service.translate_dict(
+                    pending,
+                    target_lang,
+                    self.callbacks,
+                    context=mod_name,
+                )
             )
-            for key, value in translated.items():
-                merged[key] = value
-
         return self._write_lang_output(
             merged,
             tr_path,
@@ -372,6 +480,28 @@ class JarProcessor:
             item,
             en_data,
         )
+
+    def _formatkit_ready(
+        self,
+        archive,
+        item,
+        target_lang,
+        target_path,
+    ) -> bool:
+        try:
+            source_text = archive.read(item).decode(
+                "utf-8-sig",
+                errors="ignore",
+            )
+            self.format_registry.plan(
+                item.filename,
+                source_text,
+                target_lang["file"],
+                target_path_hint=target_path,
+            )
+        except (OSError, ValueError, FormatValidationError):
+            return False
+        return True
 
     def _write_lang_output(self, data, tr_path, output_mode, pack_writer, zout, written_inplace, item, en_data) -> bool:
         payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -606,8 +736,32 @@ class JarProcessor:
                     "yellow",
                 )
 
-        payload = output_text.encode("utf-8")
         if output_mode == "resourcepack" and pack_writer:
+            if is_modonomicon_path(item.filename):
+                localized = build_localized_overlay(
+                    item.filename,
+                    en_text,
+                    output_text,
+                    target_lang["file"],
+                )
+                output_text = localized.data_text
+                pack_writer.write(
+                    localized.source_lang_path,
+                    json.dumps(
+                        localized.source_entries,
+                        ensure_ascii=False,
+                        indent=2,
+                    ).encode("utf-8"),
+                )
+                pack_writer.write(
+                    localized.target_lang_path,
+                    json.dumps(
+                        localized.target_entries,
+                        ensure_ascii=False,
+                        indent=2,
+                    ).encode("utf-8"),
+                )
+            payload = output_text.encode("utf-8")
             pack_writer.write(tr_path, payload)
             self._copy_relocated_dependencies(
                 zin,
@@ -622,6 +776,7 @@ class JarProcessor:
             )
             return True
         if zout:
+            payload = output_text.encode("utf-8")
             zout.writestr(tr_path, payload)
             written_inplace.add(tr_path)
             self._copy_relocated_dependencies(

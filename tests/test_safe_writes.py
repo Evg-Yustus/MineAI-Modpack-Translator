@@ -122,7 +122,108 @@ class AtomicWriteTests(unittest.TestCase):
 
 
 class PackWriterTests(unittest.TestCase):
-    def test_datapack_uses_kubejs_when_openloader_is_not_installed(self):
+    def test_datapack_is_installed_in_every_world_without_touching_kubejs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for world_name in ("World One", "World Two"):
+                world = os.path.join(directory, "saves", world_name)
+                os.makedirs(world)
+                with open(os.path.join(world, "level.dat"), "wb") as handle:
+                    handle.write(b"world")
+            os.makedirs(os.path.join(directory, "saves", "Not A World"))
+            kubejs_file = os.path.join(
+                directory,
+                "kubejs",
+                "data",
+                "paganbless",
+                "sentinel.json",
+            )
+            os.makedirs(os.path.dirname(kubejs_file))
+            with open(kubejs_file, "wb") as handle:
+                handle.write(b"original")
+
+            writer = PackWriter(directory, "Pagan Guide", "1.21.1", "Russian")
+            entry = "data/paganbless/modonomicon/books/pagan_guide/book.json"
+            writer.write(entry, b'{"name":"mineai.book.paganbless.name"}')
+
+            resourcepack, master_datapack = writer.close()
+
+            self.assertIsNone(resourcepack)
+            self.assertEqual(writer.datapack_install_mode, "worlds")
+            self.assertIsNotNone(master_datapack)
+            with open(master_datapack, "rb") as handle:
+                master_bytes = handle.read()
+            expected = [
+                os.path.join(
+                    directory,
+                    "saves",
+                    world_name,
+                    "datapacks",
+                    os.path.basename(master_datapack),
+                )
+                for world_name in ("World One", "World Two")
+            ]
+            self.assertEqual(writer.datapack_installed_paths, expected)
+            for path in expected:
+                with open(path, "rb") as handle:
+                    self.assertEqual(handle.read(), master_bytes)
+                with zipfile.ZipFile(path) as archive:
+                    self.assertIn(entry, archive.namelist())
+            self.assertFalse(
+                os.path.exists(
+                    os.path.join(
+                        directory,
+                        "saves",
+                        "Not A World",
+                        "datapacks",
+                    )
+                )
+            )
+            with open(kubejs_file, "rb") as handle:
+                self.assertEqual(handle.read(), b"original")
+
+    def test_world_datapack_install_rolls_back_every_world_on_copy_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for world_name in ("A", "B"):
+                world = os.path.join(directory, "saves", world_name)
+                os.makedirs(world)
+                with open(os.path.join(world, "level.dat"), "wb") as handle:
+                    handle.write(b"world")
+
+            writer = PackWriter(directory, "Rollback", "1.21.1", "Russian")
+            writer.write("data/example/books/page.json", b"translated")
+            archive_name = os.path.basename(writer.dp_zip_path)
+            first_target = os.path.join(
+                directory, "saves", "A", "datapacks", archive_name
+            )
+            second_target = os.path.join(
+                directory, "saves", "B", "datapacks", archive_name
+            )
+            os.makedirs(os.path.dirname(first_target))
+            with open(first_target, "wb") as handle:
+                handle.write(b"previous")
+
+            calls = 0
+
+            def fail_second_copy(path, payload):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("copy failed")
+                atomic_write_bytes(path, payload)
+
+            with mock.patch(
+                "mineai.output.pack_writer.atomic_write_bytes",
+                side_effect=fail_second_copy,
+            ):
+                with self.assertRaises(OSError):
+                    writer.close()
+
+            with open(first_target, "rb") as handle:
+                self.assertEqual(handle.read(), b"previous")
+            self.assertFalse(os.path.exists(second_target))
+            self.assertEqual(writer.datapack_installed_paths, [])
+
+    def test_kubejs_is_never_used_as_a_datapack_target(self):
         with tempfile.TemporaryDirectory() as directory:
             mods = os.path.join(directory, "mods")
             os.makedirs(mods)
@@ -142,7 +243,7 @@ class PackWriterTests(unittest.TestCase):
 
             resourcepack, datapack = writer.close()
 
-            target = os.path.join(
+            forbidden_target = os.path.join(
                 directory,
                 "kubejs",
                 "data",
@@ -153,19 +254,20 @@ class PackWriterTests(unittest.TestCase):
                 "book.json",
             )
             self.assertIsNone(resourcepack)
-            self.assertIsNone(datapack)
-            self.assertEqual(writer.datapack_install_mode, "kubejs")
-            self.assertEqual(writer.datapack_installed_paths, [target])
-            with open(target, "rb") as handle:
-                self.assertEqual(
-                    handle.read(),
-                    '{"name":"Языческое руководство"}'.encode("utf-8"),
+            self.assertIsNotNone(datapack)
+            self.assertEqual(writer.datapack_install_mode, "manual")
+            self.assertEqual(writer.datapack_installed_paths, [])
+            self.assertFalse(os.path.exists(forbidden_target))
+            with zipfile.ZipFile(datapack) as archive:
+                self.assertIn(
+                    "data/paganbless/modonomicon/books/pagan_guide/book.json",
+                    archive.namelist(),
                 )
             self.assertFalse(
                 os.path.exists(os.path.join(directory, "config", "openloader"))
             )
 
-    def test_datapack_uses_openloader_only_when_mod_is_installed(self):
+    def test_openloader_is_not_used_as_a_datapack_target(self):
         with tempfile.TemporaryDirectory() as directory:
             mods = os.path.join(directory, "mods")
             os.makedirs(mods)
@@ -182,14 +284,17 @@ class PackWriterTests(unittest.TestCase):
 
             _resourcepack, datapack = writer.close()
 
-            self.assertEqual(writer.datapack_install_mode, "openloader")
+            self.assertEqual(writer.datapack_install_mode, "manual")
             self.assertIsNotNone(datapack)
             self.assertTrue(
                 os.path.normpath(datapack).startswith(
                     os.path.normpath(
-                        os.path.join(directory, "config", "openloader", "data")
+                        os.path.join(directory, "MineAI_Datapacks")
                     )
                 )
+            )
+            self.assertFalse(
+                os.path.exists(os.path.join(directory, "config", "openloader"))
             )
             with zipfile.ZipFile(datapack) as archive:
                 self.assertIn("data/example/books/page.json", archive.namelist())
@@ -214,7 +319,7 @@ class PackWriterTests(unittest.TestCase):
                 os.path.exists(os.path.join(directory, "config", "openloader"))
             )
 
-    def test_kubejs_files_are_rolled_back_if_final_pack_validation_fails(self):
+    def test_kubejs_files_stay_unchanged_if_final_pack_validation_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             mods = os.path.join(directory, "mods")
             os.makedirs(mods)
@@ -243,7 +348,7 @@ class PackWriterTests(unittest.TestCase):
                 self.assertEqual(handle.read(), b"original")
             self.assertEqual(writer.datapack_installed_paths, [])
 
-    def test_kubejs_install_rejects_data_path_traversal(self):
+    def test_pack_rejects_data_path_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
             mods = os.path.join(directory, "mods")
             os.makedirs(mods)
@@ -253,10 +358,10 @@ class PackWriterTests(unittest.TestCase):
                     '[[mods]]\nmodId = "kubejs"\n',
                 )
             writer = PackWriter(directory, "Unsafe", "1.21.1", "Russian")
-            writer.write("data/../../outside.json", b"unsafe")
-
             with self.assertRaises(ValueError):
-                writer.close()
+                writer.write("data/../../outside.json", b"unsafe")
+
+            writer.abort()
 
             self.assertFalse(os.path.exists(os.path.join(directory, "outside.json")))
 

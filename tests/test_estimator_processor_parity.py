@@ -300,6 +300,48 @@ class BookParityTests(unittest.TestCase):
             },
         )
 
+    def test_oracle_index_estimator_matches_sdk_processor(self) -> None:
+        source_path = "assets/demo/oracle_index/books/guide/index.mdx"
+        target_path = (
+            "assets/demo/oracle_index/books/guide/"
+            ".translated/ru_ru/index.mdx"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jar_path = Path(temp_dir) / "oracle.jar"
+            self._write_jar(
+                jar_path,
+                {source_path: "# Getting Started\n\nNew paragraph.\n"},
+            )
+            state = _state()
+            estimated = StringEstimator(state).estimate(
+                [str(jar_path)],
+                [],
+                [],
+                [],
+                target_lang=TARGET_LANG,
+                mode="force",
+                translate_mods=False,
+                translate_books=True,
+                translate_quests=False,
+                smart_glue=False,
+            )
+            service = _Service()
+            writer = _Writer()
+            JarProcessor(service, state, _callbacks()).process(
+                str(jar_path),
+                target_lang=TARGET_LANG,
+                mode="force",
+                output_mode="resourcepack",
+                translate_mods=False,
+                translate_books=True,
+                pack_writer=writer,
+            )
+
+            processed = sum(len(call) for call in service.calls)
+            self.assertEqual(estimated, processed)
+            self.assertEqual(estimated, 2)
+            self.assertIn(target_path, writer.files)
+
     def test_locale_json_book_does_not_require_framework_name_in_path(self) -> None:
         source_path = (
             "assets/tconstruct/book/puny_smelting/en_us/casting/intro.json"
@@ -358,11 +400,15 @@ class BookParityTests(unittest.TestCase):
         target_path = "assets/demo/patchouli_books/guide/ru_ru/entries/a.json"
         source = {
             "name": "Original title",
-            "text": "New paragraph",
+            "pages": [
+                {"type": "patchouli:text", "text": "New paragraph"},
+            ],
         }
         target = {
             "name": "Сохранённый заголовок",
-            "text": "New paragraph",
+            "pages": [
+                {"type": "patchouli:text", "text": "New paragraph"},
+            ],
         }
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -404,10 +450,13 @@ class BookParityTests(unittest.TestCase):
 
             self.assertEqual(estimated, 1)
             self.assertEqual(len(service.calls), 1)
-            self.assertEqual(set(service.calls[0]), {"text"})
+            self.assertEqual(set(service.calls[0]), {"json:/pages/0/text"})
             output = json.loads(writer.files[target_path])
             self.assertEqual(output["name"], "Сохранённый заголовок")
-            self.assertEqual(output["text"], "Перевод: New paragraph")
+            self.assertEqual(
+                output["pages"][0]["text"],
+                "Перевод: New paragraph",
+            )
 
     def test_datapack_patchouli_json_is_written_to_target_locale_path(self) -> None:
         source_path = "data/demo/patchouli_books/guide/en_us/entries/a.json"

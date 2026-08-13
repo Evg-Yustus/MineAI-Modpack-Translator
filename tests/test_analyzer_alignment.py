@@ -22,18 +22,64 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
                 archive.writestr(name, content)
         return path
 
-    def _counts(self, path: str):
+    def _counts(
+        self,
+        path: str,
+        *,
+        translate_mods: bool = False,
+        translate_books: bool = True,
+    ):
         state = JobState()
         state.start()
         rows = []
         analyzed = ModpackAnalyzer(state)._analyze_jar(
-            path, "ru_ru.json", TARGET_LANG["regex"], False, True,
+            path,
+            "ru_ru.json",
+            TARGET_LANG["regex"],
+            translate_mods,
+            translate_books,
             lambda *row: rows.append(row), "Example",
         )
         estimated = StringEstimator(state)._estimate_jar(
-            path, "ru_ru.json", TARGET_LANG, "force", False, True, False,
+            path,
+            "ru_ru.json",
+            TARGET_LANG,
+            "force",
+            translate_mods,
+            translate_books,
+            False,
         )
         return analyzed, estimated, rows
+
+    def test_conflicting_duplicate_locale_uses_legacy_count_fallback(self) -> None:
+        path = self._make_jar({
+            "assets/example/lang/en_us.json": (
+                '{"example.name":"Old","example.name":"Resources"}'
+            ),
+        })
+
+        analyzed, estimated, rows = self._counts(
+            path,
+            translate_mods=True,
+            translate_books=False,
+        )
+
+        self.assertEqual(analyzed, (1, 0))
+        self.assertEqual(estimated, 1)
+        self.assertEqual(rows, [("📦", "Example", "Интерфейс", 0, 1, 0)])
+
+    def test_legacy_patchouli_string_pages_use_legacy_count_fallback(self) -> None:
+        path = self._make_jar({
+            "data/example/patchouli_books/guide/en_us/entries/legacy.json": (
+                '{"name":"Resources","pages":["Welcome to the guide."]}'
+            ),
+        })
+
+        analyzed, estimated, rows = self._counts(path)
+
+        self.assertEqual(analyzed, (2, 0))
+        self.assertEqual(estimated, 2)
+        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 2, 0)])
 
     def test_nonlocalized_research_json_is_ignored_by_both(self) -> None:
         path = self._make_jar({
@@ -51,6 +97,19 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
                     "name": "Getting Started",
                     "pages": [{"text": "Welcome to the guide."}],
                 })
+            ),
+        })
+
+        analyzed, estimated, rows = self._counts(path)
+
+        self.assertEqual(analyzed, (2, 0))
+        self.assertEqual(estimated, 2)
+        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 2, 0)])
+
+    def test_oracle_index_book_is_counted_by_analysis_and_estimator(self) -> None:
+        path = self._make_jar({
+            "assets/example/oracle_index/books/guide/index.mdx": (
+                "# Getting Started\n\nWelcome to the guide.\n"
             ),
         })
 

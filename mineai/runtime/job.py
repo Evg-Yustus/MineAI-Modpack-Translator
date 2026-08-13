@@ -333,6 +333,7 @@ class TranslationJob:
         processing_failed = False
         failed_files = 0
         modified_paths: list[str] = []
+        world_datapack_paths: list[str] = []
         pack_outputs: tuple[str | None, str | None] = (None, None)
         total_items = (
             len(jars)
@@ -529,12 +530,12 @@ class TranslationJob:
                             pack_writer, "datapack_installed_paths", ()
                         )
                         if isinstance(installed_paths, (list, tuple)):
-                            for changed_path in installed_paths:
+                            for installed_path in installed_paths:
                                 if (
-                                    isinstance(changed_path, str)
-                                    and changed_path not in modified_paths
+                                    isinstance(installed_path, str)
+                                    and installed_path not in world_datapack_paths
                                 ):
-                                    modified_paths.append(changed_path)
+                                    world_datapack_paths.append(installed_path)
                 except Exception:
                     failed = True
                     self.on_log(
@@ -568,7 +569,7 @@ class TranslationJob:
 
         if not failed and self.state.should_run():
             resourcepack, datapack = pack_outputs
-            if resourcepack or datapack or modified_paths:
+            if resourcepack or datapack or modified_paths or world_datapack_paths:
                 self.on_log("\n📌 ФАКТИЧЕСКИЕ РЕЗУЛЬТАТЫ:", "white")
             if resourcepack:
                 self.on_log(f"📦 Ресурспак: {resourcepack}", "cyan")
@@ -592,11 +593,17 @@ class TranslationJob:
                     == "manual"
                 ):
                     self.on_log(
-                        "⚠️ В сборке не найден OpenLoader или KubeJS. "
-                        "Архив создан, но его нужно поместить в папку "
-                        "datapacks нужного мира вручную.",
+                        "⚠️ В сборке пока нет сохранённых миров. Мастер-архив "
+                        "создан в MineAI_Datapacks; после создания мира "
+                        "повторите перевод или установите архив вручную в "
+                        "saves/<мир>/datapacks.",
                         "yellow",
                     )
+            for installed_path in world_datapack_paths:
+                self.on_log(
+                    f"🌍 Датапак установлен в мир: {installed_path}",
+                    "magenta",
+                )
             for changed_path in modified_paths:
                 self.on_log(f"📝 Изменён файл: {changed_path}", "cyan")
 

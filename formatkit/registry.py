@@ -15,6 +15,7 @@ from formatkit.adapters.markdown import MarkdownAdapter
 from formatkit.adapters.properties import PropertiesAdapter
 from formatkit.adapters.xml_text import XmlTextAdapter
 from formatkit.contracts import TranslationPlan
+from formatkit.upstream import DualValidatedPlan, UpstreamAdapter
 
 
 class FormatRegistry:
@@ -34,6 +35,7 @@ class FormatRegistry:
                 PropertiesAdapter(),
                 XmlTextAdapter(),
                 MarkdownAdapter(),
+                UpstreamAdapter(),
             )
         )
 
@@ -52,12 +54,34 @@ class FormatRegistry:
         target_path_hint: str | None = None,
     ) -> TranslationPlan:
         adapter = self.adapter_for(logical_path, text)
-        return adapter.plan(
+        plan = adapter.plan(
             logical_path,
             text,
             target_locale,
             target_path_hint=target_path_hint,
         )
+        if isinstance(adapter, UpstreamAdapter):
+            return plan
+
+        upstream = next(
+            (
+                item
+                for item in self.adapters
+                if isinstance(item, UpstreamAdapter)
+            ),
+            None,
+        )
+        if upstream is None or not upstream.supports(logical_path, text):
+            return plan
+        sdk_plan = upstream.plan(
+            logical_path,
+            text,
+            target_locale,
+            target_path_hint=plan.target_path or target_path_hint,
+        )
+        if not sdk_plan.can_validate_legacy_plan(plan):
+            return plan
+        return DualValidatedPlan(plan, sdk_plan)
 
     def companion_lang_prefixes(
         self,
@@ -94,3 +118,31 @@ class FormatRegistry:
                 except ValueError:
                     continue
         return keys
+
+    def upstream_adapter_id(self, logical_path: str) -> str | None:
+        upstream = next(
+            (
+                item
+                for item in self.adapters
+                if isinstance(item, UpstreamAdapter)
+            ),
+            None,
+        )
+        return None if upstream is None else upstream.adapter_id_for(logical_path)
+
+    def upstream_target_path(
+        self,
+        logical_path: str,
+        target_locale: str,
+    ) -> str | None:
+        upstream = next(
+            (
+                item
+                for item in self.adapters
+                if isinstance(item, UpstreamAdapter)
+            ),
+            None,
+        )
+        if upstream is None:
+            return None
+        return upstream.target_path_for(logical_path, target_locale)

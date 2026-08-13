@@ -443,6 +443,13 @@ class ModpackAnalyzer:
             )
             is_mb = markdown_target is not None
             is_modonomicon = is_modonomicon_path(item.filename)
+            upstream_adapter_id = self.format_registry.upstream_adapter_id(
+                item.filename
+            )
+            upstream_target = self.format_registry.upstream_target_path(
+                item.filename,
+                target_file.removesuffix(".json"),
+            )
             is_companion_lang = (
                 include_companion_lang
                 and (companion_prefixes or companion_keys)
@@ -497,6 +504,73 @@ class ModpackAnalyzer:
                     b_en += len(plan.units)
                 except (OSError, ValueError):
                     pass
+            elif (
+                upstream_adapter_id
+                in {
+                    "patchouli-book-json",
+                    "oracle-index-mdx",
+                    "oracle-index-meta-json",
+                }
+                and upstream_target
+            ):
+                try:
+                    source_text = zin.read(item).decode(
+                        "utf-8-sig",
+                        errors="ignore",
+                    )
+                    plan = self.format_registry.plan(
+                        item.filename,
+                        source_text,
+                        target_file.removesuffix(".json"),
+                        target_path_hint=upstream_target,
+                    )
+                    b_en += len(plan.units)
+                    target_key = upstream_target.casefold()
+                    if target_key in locale:
+                        target_text = zin.read(locale[target_key]).decode(
+                            "utf-8-sig",
+                            errors="ignore",
+                        )
+                        target_plan = self.format_registry.plan(
+                            upstream_target,
+                            target_text,
+                            target_file.removesuffix(".json"),
+                            target_path_hint=upstream_target,
+                        )
+                        _merged, pending = plan.merge_existing(
+                            target_plan,
+                            target_regex,
+                        )
+                        b_tr += len(plan.units) - len(pending)
+                except (OSError, ValueError, FormatValidationError):
+                    if upstream_adapter_id == "patchouli-book-json" and is_jb:
+                        try:
+                            en = load_lenient_json(zin.read(item))
+                            tr_path = fl.replace(
+                                "/en_us/",
+                                f"/{target_file.replace('.json','')}/",
+                            )
+                            tr = (
+                                load_lenient_json(zin.read(locale[tr_path]))
+                                if tr_path in locale
+                                else {}
+                            )
+                            source_map, _preserved, pending = (
+                                collect_book_json_selection(
+                                    en,
+                                    tr,
+                                    "append",
+                                    {
+                                        "api": target_file.split("_", 1)[0],
+                                        "file": target_file.removesuffix(".json"),
+                                        "regex": target_regex,
+                                    },
+                                )
+                            )
+                            b_en += len(source_map)
+                            b_tr += max(0, len(source_map) - len(pending))
+                        except (json.JSONDecodeError, OSError):
+                            pass
             elif is_jb:
                 try:
                     en = load_lenient_json(zin.read(item))

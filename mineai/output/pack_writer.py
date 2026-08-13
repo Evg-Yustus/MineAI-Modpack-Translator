@@ -8,7 +8,7 @@ from mineai.io_utils import atomic_write_bytes, atomic_write_text
 
 
 class PackWriter:
-    """Create translation packs and install data through an available loader."""
+    """Create translation packs and install data in existing Minecraft worlds."""
 
     _MOD_METADATA_PATHS = (
         "META-INF/neoforge.mods.toml",
@@ -35,19 +35,12 @@ class PackWriter:
         self.resourcepack_enabled = False
         self.datapack_install_mode = self._detect_datapack_install_mode(mc_dir)
         self.datapack_installed_paths: list[str] = []
-        self._kubejs_originals: list[tuple[str, bytes | None]] = []
+        self._world_datapack_originals: list[tuple[str, bytes | None]] = []
         self._pending_files: dict[str, bytes] = {}
         fmt = PACK_FORMATS.get(mc_version, PACK_FORMATS["1.21.1"])
 
         rp_dir = os.path.join(mc_dir, "resourcepacks")
-        if self.datapack_install_mode == "openloader":
-            dp_dir: str | None = os.path.join(
-                mc_dir, "config", "openloader", "data"
-            )
-        elif self.datapack_install_mode == "manual":
-            dp_dir = os.path.join(mc_dir, "MineAI_Datapacks")
-        else:
-            dp_dir = None
+        dp_dir = os.path.join(mc_dir, "MineAI_Datapacks")
         os.makedirs(rp_dir, exist_ok=True)
         if dp_dir:
             os.makedirs(dp_dir, exist_ok=True)
@@ -91,12 +84,32 @@ class PackWriter:
 
     @classmethod
     def _detect_datapack_install_mode(cls, mc_dir: str) -> str:
-        mod_ids = cls._installed_mod_ids(os.path.join(mc_dir, "mods"))
-        if "openloader" in mod_ids:
-            return "openloader"
-        if "kubejs" in mod_ids:
-            return "kubejs"
-        return "manual"
+        return "worlds" if cls._world_directories(mc_dir) else "manual"
+
+    @staticmethod
+    def _world_directories(mc_dir: str) -> list[str]:
+        saves_dir = os.path.realpath(os.path.join(mc_dir, "saves"))
+        if not os.path.isdir(saves_dir):
+            return []
+        worlds: list[str] = []
+        try:
+            names = sorted(os.listdir(saves_dir), key=str.casefold)
+        except OSError:
+            return []
+        for name in names:
+            world = os.path.realpath(os.path.join(saves_dir, name))
+            try:
+                inside_saves = os.path.commonpath((saves_dir, world)) == saves_dir
+            except ValueError:
+                inside_saves = False
+            if (
+                inside_saves
+                and world != saves_dir
+                and os.path.isdir(world)
+                and os.path.isfile(os.path.join(world, "level.dat"))
+            ):
+                worlds.append(world)
+        return worlds
 
     @classmethod
     def _installed_mod_ids(cls, mods_dir: str) -> set[str]:
@@ -176,7 +189,15 @@ class PackWriter:
 
     @staticmethod
     def _normalize_output_path(internal_path: str) -> str:
-        normalized = internal_path.replace("\\", "/").strip("/")
+        raw_path = internal_path.replace("\\", "/")
+        if (
+            "\x00" in raw_path
+            or raw_path.startswith("/")
+            or re.match(r"^[A-Za-z]:", raw_path)
+            or ".." in raw_path.split("/")
+        ):
+            raise ValueError(f"Unsafe pack path: {internal_path}")
+        normalized = raw_path.strip("/")
         lower_path = normalized.casefold()
         embedded_assets = lower_path.find("/assets/")
         if embedded_assets >= 0:
@@ -197,9 +218,7 @@ class PackWriter:
         internal_path = self._normalize_output_path(internal_path)
         handle = self.handle_for_path(internal_path)
         is_data = internal_path.lower().startswith("data/")
-        if not handle and not (
-            is_data and self.datapack_install_mode == "kubejs"
-        ):
+        if not handle:
             return
         if internal_path in self._pending_files:
             self._pending_files[internal_path] = self._merge_locale_json(
@@ -233,44 +252,29 @@ class PackWriter:
         return json.dumps(merged, ensure_ascii=False, indent=2).encode("utf-8")
 
     def _flush_pending_files(self) -> None:
-        kubejs_files: dict[str, bytes] = {}
-        kubejs_data_root = os.path.realpath(
-            os.path.join(self.mc_dir, "kubejs", "data")
-        )
         for path, payload in self._pending_files.items():
-            if (
-                path.lower().startswith("data/")
-                and self.datapack_install_mode == "kubejs"
-            ):
-                target = os.path.join(
-                    self.mc_dir,
-                    "kubejs",
-                    *path.replace("\\", "/").split("/"),
-                )
-                target = os.path.realpath(target)
-                try:
-                    inside_data_root = (
-                        os.path.commonpath((kubejs_data_root, target))
-                        == kubejs_data_root
-                    )
-                except ValueError:
-                    inside_data_root = False
-                if not inside_data_root or target == kubejs_data_root:
-                    raise ValueError(f"Unsafe KubeJS data path: {path}")
-                kubejs_files[target] = payload
-                continue
             handle = self.handle_for_path(path)
             if handle:
                 handle.writestr(path, payload)
-        if kubejs_files:
-            self._install_kubejs_files(kubejs_files)
         self._pending_files.clear()
 
-    def _install_kubejs_files(self, files: dict[str, bytes]) -> None:
-        """Install loose data transactionally; restore originals on failure."""
+    def _install_datapack_in_worlds(self) -> None:
+        if not self.dp_zip_path:
+            return
+        with open(self.dp_zip_path, "rb") as handle:
+            payload = handle.read()
+        targets = [
+            os.path.join(
+                world,
+                "datapacks",
+                os.path.basename(self.dp_zip_path),
+            )
+            for world in self._world_directories(self.mc_dir)
+        ]
+        self.datapack_install_mode = "worlds" if targets else "manual"
         originals: list[tuple[str, bytes | None]] = []
         try:
-            for target, payload in files.items():
+            for target in targets:
                 original = None
                 if os.path.isfile(target):
                     with open(target, "rb") as handle:
@@ -288,11 +292,11 @@ class PackWriter:
                 except OSError:
                     pass
             raise
-        self._kubejs_originals = originals
-        self.datapack_installed_paths = list(files)
+        self._world_datapack_originals = originals
+        self.datapack_installed_paths = targets
 
-    def _rollback_kubejs_files(self) -> None:
-        for target, original in reversed(self._kubejs_originals):
+    def _rollback_world_datapacks(self) -> None:
+        for target, original in reversed(self._world_datapack_originals):
             try:
                 if original is None:
                     if os.path.exists(target):
@@ -301,7 +305,7 @@ class PackWriter:
                     atomic_write_bytes(target, original)
             except OSError:
                 pass
-        self._kubejs_originals.clear()
+        self._world_datapack_originals.clear()
         self.datapack_installed_paths.clear()
 
     @staticmethod
@@ -341,7 +345,7 @@ class PackWriter:
         self._pending_files.clear()
         self._close_handles()
         self._remove_output_archives()
-        self._rollback_kubejs_files()
+        self._rollback_world_datapacks()
 
     def abort(self) -> None:
         """Close and remove archives created by an incomplete translation job."""
@@ -373,15 +377,20 @@ class PackWriter:
                 except Exception as exc:
                     errors.append(exc)
                     break
+        if not errors and self.dp_zip_path:
+            try:
+                self._install_datapack_in_worlds()
+            except Exception as exc:
+                errors.append(exc)
         if errors:
             self._remove_output_archives()
-            self._rollback_kubejs_files()
+            self._rollback_world_datapacks()
             raise errors[0]
         if self.rp_zip_path:
             self.resourcepack_enabled = self._enable_resource_pack(
                 self.rp_zip_path
             )
-        self._kubejs_originals.clear()
+        self._world_datapack_originals.clear()
         return self.rp_zip_path, self.dp_zip_path
 
     def _enable_resource_pack(self, resourcepack_path: str) -> bool:

@@ -145,7 +145,11 @@ def iter_translatable_strings(data: Any, path: tuple = ()) -> Iterator[tuple[tup
     if isinstance(data, dict):
         for key, value in data.items():
             child_path = path + (key,)
-            if _is_translatable_json_key(key):
+            if _is_translatable_json_key(key) or (
+                key == "pages"
+                and isinstance(value, list)
+                and all(isinstance(item, str) for item in value)
+            ):
                 if isinstance(value, str):
                     yield child_path, value
                 elif isinstance(value, list) and all(isinstance(i, str) for i in value):

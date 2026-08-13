@@ -197,6 +197,17 @@ class StringEstimator:
                     markdown_target = book_locator.target_path(item.filename)
                     is_book_md = markdown_target is not None
                     is_modonomicon = is_modonomicon_path(item.filename)
+                    upstream_adapter_id = (
+                        self.format_registry.upstream_adapter_id(
+                            item.filename
+                        )
+                    )
+                    upstream_target = (
+                        self.format_registry.upstream_target_path(
+                            item.filename,
+                            target_lang["file"],
+                        )
+                    )
                     legacy_lang_target = legacy_lang_target_path(
                         item.filename,
                         target_lang["file"],
@@ -220,14 +231,29 @@ class StringEstimator:
                             legacy_lang_target,
                         )
                     elif translate_mods and is_lang:
-                        count += self._count_lang(
-                            archive,
-                            item,
-                            locale,
-                            target_file,
-                            mode,
-                            target_lang["regex"],
-                        )
+                        try:
+                            count += self._count_book_md(
+                                archive,
+                                item,
+                                locale,
+                                target_lang,
+                                mode,
+                                smart_glue,
+                                upstream_target
+                                or minecraft_lang_json_target_path(
+                                    item.filename,
+                                    target_lang["file"],
+                                ),
+                            )
+                        except (ValueError, FormatValidationError):
+                            count += self._count_lang(
+                                archive,
+                                item,
+                                locale,
+                                target_file,
+                                mode,
+                                target_lang["regex"],
+                            )
                     elif (
                         companion_lang_prefixes or companion_lang_keys
                     ) and is_lang:
@@ -247,6 +273,47 @@ class StringEstimator:
                             item,
                             target_lang,
                             mode,
+                        )
+                    elif (
+                        translate_books
+                        and upstream_adapter_id == "patchouli-book-json"
+                        and upstream_target
+                    ):
+                        try:
+                            count += self._count_book_md(
+                                archive,
+                                item,
+                                locale,
+                                target_lang,
+                                mode,
+                                smart_glue,
+                                upstream_target,
+                            )
+                        except (ValueError, FormatValidationError):
+                            count += self._count_book_json(
+                                archive,
+                                item,
+                                locale,
+                                target_lang,
+                                mode,
+                            )
+                    elif (
+                        translate_books
+                        and upstream_adapter_id
+                        in {
+                            "oracle-index-mdx",
+                            "oracle-index-meta-json",
+                        }
+                        and upstream_target
+                    ):
+                        count += self._count_book_md(
+                            archive,
+                            item,
+                            locale,
+                            target_lang,
+                            mode,
+                            smart_glue,
+                            upstream_target,
                         )
                     elif translate_books and is_book_json:
                         count += self._count_book_json(
