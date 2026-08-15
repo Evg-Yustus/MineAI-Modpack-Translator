@@ -1,5 +1,6 @@
 ﻿import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
@@ -162,7 +163,10 @@ class PackWriterTests(unittest.TestCase):
                 )
                 for world_name in ("World One", "World Two")
             ]
-            self.assertEqual(writer.datapack_installed_paths, expected)
+            self.assertEqual(
+                writer.datapack_installed_paths,
+                [str(Path(path).resolve()) for path in expected],
+            )
             for path in expected:
                 with open(path, "rb") as handle:
                     self.assertEqual(handle.read(), master_bytes)
