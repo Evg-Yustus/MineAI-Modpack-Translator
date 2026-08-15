@@ -1,6 +1,6 @@
 ﻿# 🌍 MineAI Translator (The Ultimate Modpack Localizer)
 
-[![Beta38](https://img.shields.io/badge/version-10.0.0--BETAv38-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
+[![Beta39](https://img.shields.io/badge/version-10.0.0--BETAv39-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
 [![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License review](https://img.shields.io/badge/FormatKit_license-review_required-orange.svg)](#license)
@@ -27,7 +27,7 @@ The program features a modern Graphical User Interface (GUI). You don't need to 
 You don't need to install Python or mess with code! You can download the ready-to-use application.
 
 1. Go to the [Releases](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases) tab on the right.
-2. Download the latest **`MineAI_Translator_Beta38.exe`** file.
+2. Download the latest **`MineAI_Translator_Beta39.exe`** file.
 3. Place it in a convenient folder and run it with a double click.
 
 *(For advanced users and developers, instructions on running from source code are at the bottom of the page).*
@@ -125,7 +125,9 @@ The program launches the `koboldcpp.exe` engine itself (just place it in the `AI
 ### Option 3: Local AI (LM Studio)
 1. Start **Local Server** on the Developer page in LM Studio.
 2. Open **Settings → LM Studio**. The default API address is `http://localhost:1234/v1`.
-3. Click **Refresh models**, select a model, save the settings, and choose **LM Studio** in the main window.
+3. Load the required LLM in LM Studio and click **Refresh models**. MineAI fills
+   the only loaded instance ID automatically or offers a list when several LLMs
+   are loaded. Save the settings and choose **LM Studio** in the main window.
 
 An API token is optional unless authentication is enabled in LM Studio. MineAI reuses the local HTTP connection between translation batches for lower request overhead.
 
@@ -159,12 +161,13 @@ mineai/
 If you modified the code and want to build your own executable without a console window, simply run the provided batch file:
 `build.bat`
 
-The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta38.exe`.
+The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta39.exe`.
 
 ### FormatKit SDK
 
-Beta38 keeps the proven semantic-unit pipeline from Beta37 and adds safe
-per-world datapack installation plus deterministic Modonomicon localization.
+Beta39 keeps the proven semantic-unit pipeline from Beta38 and adds a
+timestamped session journal, lossless full-line display, confirmation before
+clearing the visible journal, and automatic discovery of loaded LM Studio LLMs.
 The embedded architecture combines the
 standalone `mineai_formatkit` SDK. Existing GuideME and IE manuals keep their
 contextual translation units and must also pass the second SDK reconstruction.
@@ -234,7 +237,10 @@ The upstream API and corpus notes are kept in
 ### Вариант 3: Локальный ИИ (LM Studio)
 1. Запустите **Local Server** на вкладке Developer в LM Studio.
 2. Откройте **Настройки → LM Studio**. Адрес API по умолчанию: `http://localhost:1234/v1`.
-3. Нажмите **Обновить модели**, выберите модель, сохраните настройки и выберите **LM Studio** в главном окне.
+3. Загрузите нужную LLM в LM Studio и нажмите **Обновить модели**. MineAI сам
+   подставит единственный загруженный instance ID либо покажет список, если
+   загружено несколько моделей. Сохраните настройки и выберите **LM Studio** в
+   главном окне.
 
 API-токен нужен только тогда, когда авторизация включена в LM Studio. MineAI переиспользует локальное HTTP-соединение между пакетами перевода, уменьшая накладные расходы запросов.
 
@@ -248,12 +254,13 @@ API-токен нужен только тогда, когда авторизац
 
 Для сборки собственного `.exe` файла без окна консоли используйте готовый батник:
 `build.bat`
-(Результат появится в папке `dist/MineAI_Translator_Beta38.exe`).
+(Результат появится в папке `dist/MineAI_Translator_Beta39.exe`).
 
 ### SDK FormatKit
 
-Beta38 сохраняет объединённую архитектуру Beta37 и добавляет безопасную
-установку датапака в каждый мир и стабильную локализацию Modonomicon. Проект
+Beta39 сохраняет объединённую архитектуру Beta38 и добавляет журнал сеансов с
+временем, настоящее отображение полных строк, подтверждение очистки журнала и
+автоматический выбор загруженных моделей LM Studio. Проект
 объединяет смысловые блоки с отдельным SDK
 `mineai_formatkit`. GuideME и IE проходят двойную структурную проверку, а
 locale JSON, Patchouli и Oracle Index разбираются новым SDK напрямую без

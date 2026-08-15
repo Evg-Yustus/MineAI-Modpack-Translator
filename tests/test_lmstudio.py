@@ -3,6 +3,7 @@ from unittest import mock
 
 import os
 import inspect
+import requests
 
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
@@ -63,6 +64,26 @@ class _Session:
     def post(self, url, **kwargs):
         self.post_calls.append((url, kwargs))
         return _Response(self.post_payload)
+
+
+class _LegacyLmStudioSession(_Session):
+    def get(self, url, **kwargs):
+        self.get_calls.append((url, kwargs))
+        if url.endswith("/api/v1/models"):
+            response = _Response({})
+            response.raise_for_status = mock.Mock(
+                side_effect=requests.HTTPError("not supported")
+            )
+            return response
+        return _Response(
+            {
+                "data": [
+                    {"id": "qwen/loaded", "type": "llm", "state": "loaded"},
+                    {"id": "llama/off", "type": "llm", "state": "not-loaded"},
+                    {"id": "embed", "type": "embeddings", "state": "loaded"},
+                ]
+            }
+        )
 
 
 class _Config:
@@ -139,6 +160,65 @@ class LmStudioApiTests(unittest.TestCase):
         self.assertEqual(
             session.get_calls[0][1]["headers"]["Authorization"],
             "Bearer secret",
+        )
+
+    def test_loaded_model_list_uses_native_api_and_ignores_unloaded_or_embedding(self):
+        from mineai.engines.lmstudio import list_loaded_lmstudio_models
+
+        session = _Session(
+            get_payload={
+                "models": [
+                    {
+                        "type": "llm",
+                        "key": "qwen/model",
+                        "loaded_instances": [
+                            {"id": "qwen/model:1"},
+                            {"id": "qwen/model:2"},
+                        ],
+                    },
+                    {
+                        "type": "llm",
+                        "key": "llama/model",
+                        "loaded_instances": [],
+                    },
+                    {
+                        "type": "embedding",
+                        "key": "embed/model",
+                        "loaded_instances": [{"id": "embed/model"}],
+                    },
+                ]
+            }
+        )
+
+        models = list_loaded_lmstudio_models(
+            "http://localhost:1234/v1",
+            api_key="secret",
+            session=session,
+        )
+
+        self.assertEqual(models, ["qwen/model:1", "qwen/model:2"])
+        self.assertEqual(
+            session.get_calls[0][0],
+            "http://localhost:1234/api/v1/models",
+        )
+
+    def test_loaded_model_list_falls_back_to_legacy_state_endpoint(self):
+        from mineai.engines.lmstudio import list_loaded_lmstudio_models
+
+        session = _LegacyLmStudioSession()
+
+        models = list_loaded_lmstudio_models(
+            "http://localhost:1234/v1",
+            session=session,
+        )
+
+        self.assertEqual(models, ["qwen/loaded"])
+        self.assertEqual(
+            [url for url, _options in session.get_calls],
+            [
+                "http://localhost:1234/api/v1/models",
+                "http://localhost:1234/api/v0/models",
+            ],
         )
 
     def test_chat_requests_reuse_session_and_send_selected_model(self):
@@ -324,6 +404,43 @@ class LmStudioSettingsDialogTests(unittest.TestCase):
             self.assertIn("2", dialog.lm_status.text())
             self.assertTrue(dialog.lm_refresh.isEnabled())
             self.assertTrue(dialog.lm_test.isEnabled())
+        finally:
+            dialog.close()
+
+    def test_probe_replaces_stale_id_with_single_loaded_model(self):
+        config = self._config()
+        config.values[("LMSTUDIO", "model")] = "old/unloaded-model"
+        dialog = SettingsDialog(config, lambda: None)
+        try:
+            dialog._lmstudio_probe_finished(True, ["qwen/loaded-instance"], "")
+
+            self.assertEqual(
+                dialog.lm_model.currentText(),
+                "qwen/loaded-instance",
+            )
+            self.assertEqual(dialog.lm_model.count(), 1)
+        finally:
+            dialog.close()
+
+    def test_probe_lists_all_loaded_models_and_preserves_valid_selection(self):
+        config = self._config()
+        config.values[("LMSTUDIO", "model")] = "llama/loaded"
+        dialog = SettingsDialog(config, lambda: None)
+        try:
+            dialog._lmstudio_probe_finished(
+                True,
+                ["qwen/loaded", "llama/loaded"],
+                "",
+            )
+
+            self.assertEqual(
+                [
+                    dialog.lm_model.itemText(index)
+                    for index in range(dialog.lm_model.count())
+                ],
+                ["qwen/loaded", "llama/loaded"],
+            )
+            self.assertEqual(dialog.lm_model.currentText(), "llama/loaded")
         finally:
             dialog.close()
 

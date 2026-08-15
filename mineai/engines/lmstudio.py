@@ -80,6 +80,70 @@ def list_lmstudio_models(
     ]
 
 
+def _lmstudio_server_root(base_url: str) -> str:
+    normalized = normalize_lmstudio_base_url(base_url)
+    return normalized[: -len("/v1")]
+
+
+def _unique_model_ids(values) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        model_id = value.strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        result.append(model_id)
+    return result
+
+
+def list_loaded_lmstudio_models(
+    base_url: str,
+    *,
+    api_key: str = "",
+    timeout: int = 10,
+    session=None,
+) -> list[str]:
+    """Return IDs of LLM instances that are already loaded in LM Studio."""
+    client = session or requests.Session()
+    root = _lmstudio_server_root(base_url)
+    headers = _headers(api_key)
+    try:
+        response = client.get(
+            f"{root}/api/v1/models",
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        models = payload.get("models", []) if isinstance(payload, dict) else []
+        return _unique_model_ids(
+            instance.get("id")
+            for model in models
+            if isinstance(model, dict) and model.get("type") == "llm"
+            for instance in model.get("loaded_instances", [])
+            if isinstance(instance, dict)
+        )
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
+        response = client.get(
+            f"{root}/api/v0/models",
+            headers=headers,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        models = payload.get("data", []) if isinstance(payload, dict) else []
+        return _unique_model_ids(
+            model.get("id")
+            for model in models
+            if isinstance(model, dict)
+            and model.get("type") == "llm"
+            and str(model.get("state", "")).casefold() == "loaded"
+        )
+
+
 class LmStudioEngine(BatchLlmEngine):
     def __init__(
         self,

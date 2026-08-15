@@ -14,7 +14,7 @@ from mineai.text_processing import (
 
 _IDENTITY_PREFIX = "__mineai_identity__:"
 _CACHE_VERSION_KEY = "__mineai_ai_cache_validation_version__"
-_CACHE_VALIDATION_VERSION = "29"
+_CACHE_VALIDATION_VERSION = "30"
 _LANGUAGE_BY_API = {item["api"]: item for item in LANGUAGES.values()}
 
 
@@ -187,7 +187,7 @@ class TranslationCache:
                 if key in self._imported_data:
                     return self._imported_data[key], True
             if identity in self._data:
-                return source_text, False
+                return source_text.rsplit("␟", 1)[-1], False
             return None, False
 
     def set(self, api_code: str, source_text: str, translated: str) -> None:

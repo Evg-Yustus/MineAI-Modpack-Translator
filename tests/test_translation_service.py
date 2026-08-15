@@ -123,6 +123,97 @@ def _callbacks(logs, progress=None):
 
 
 class TranslationServiceRegressionTests(unittest.TestCase):
+    def test_numeric_and_numeric_unit_values_never_reach_any_engine(self):
+        for engine_name in ("ai", "google"):
+            with self.subTest(engine=engine_name):
+                engine = _Engine(
+                    lambda _items: self.fail("numeric values must be restored locally")
+                )
+                sources = {
+                    "integer": "123",
+                    "grouped": "3,000",
+                    "decimal": "-12.5%",
+                    "memory": "1 MB",
+                    "fluid": "520mB",
+                }
+
+                result = _Service(
+                    engine,
+                    _MemoryCache(),
+                    _Config(),
+                    engine_name=engine_name,
+                ).translate_dict(
+                    sources,
+                    TARGET_LANG,
+                    _callbacks([]),
+                )
+
+                self.assertEqual(result, sources)
+                self.assertEqual(engine.calls, [])
+
+    def test_numbers_inside_prose_are_masked_and_restored_exactly(self):
+        source = "Runs for 3,000 ticks at 80% efficiency."
+
+        def translate(items):
+            item = next(iter(items.values()))
+            self.assertNotIn("3,000", item.masked)
+            self.assertNotIn("80%", item.masked)
+            return {
+                item.key: item.masked.replace("Runs for", "Работает")
+                .replace("ticks at", "тиков с")
+                .replace("efficiency", "эффективностью")
+            }
+
+        result = _Service(
+            _Engine(translate),
+            _MemoryCache(),
+            _Config(),
+        ).translate_dict(
+            {"description": source},
+            TARGET_LANG,
+            _callbacks([]),
+        )
+
+        self.assertIn("3,000", result["description"])
+        self.assertIn("80%", result["description"])
+
+    def test_translation_cannot_invent_an_additional_number(self):
+        source = "Runs at 80% load."
+        engine = _Engine(
+            lambda items: {
+                next(iter(items)): "Работает при 80% нагрузке в 9000 циклов."
+            }
+        )
+
+        result = _Service(
+            engine,
+            _MemoryCache(),
+            _Config(),
+        ).translate_dict(
+            {"description": source},
+            TARGET_LANG,
+            _callbacks([]),
+        )
+
+        self.assertEqual(result, {"description": source})
+
+    def test_literal_numbered_marker_does_not_break_markdown_validation(self):
+        source = "Read [Guide](guide.md) and keep [#7#]."
+        translated = "Читайте [Руководство](guide.md) и сохраните [#7#]."
+        engine = _Engine(lambda items: {next(iter(items)): translated})
+
+        result = _Service(
+            engine,
+            _MemoryCache(),
+            _Config(),
+        ).translate_dict(
+            {"description": source},
+            TARGET_LANG,
+            _callbacks([]),
+        )
+
+        self.assertEqual(result, {"description": translated})
+
     def test_cache_recovery_uses_valid_google_cache_after_invalid_ai_cache(self):
         source = "Power: %s"
         ai_cache = _MemoryCache()
@@ -295,23 +386,21 @@ class TranslationServiceRegressionTests(unittest.TestCase):
         self.assertIn('<ItemLink id="ae2:controller" />', result["page"])
         self.assertNotIn("[#", result["page"])
 
-    def test_formatted_translation_sends_one_contextual_unit_around_markup(self):
+    def test_formatted_translation_sends_only_visible_nodes_around_markup(self):
         source = "The $(item) Augmenting Table is used for upgrades."
 
         def translate(items):
-            self.assertEqual(len(items), 1)
-            item = next(iter(items.values()))
-            self.assertIn("The", item.original)
-            self.assertIn("Augmenting Table is used for upgrades", item.original)
-            self.assertNotIn("$(item)", item.original)
+            self.assertEqual(len(items), 2)
+            exposed = "".join(item.original for item in items.values())
+            self.assertNotIn("$(item)", exposed)
+            self.assertNotIn("⟦FK", exposed)
             return {
-                item.key: item.original.replace(
-                    "The",
-                    "Стол ",
-                ).replace(
-                    "Augmenting Table is used for upgrades.",
-                    "используется для улучшений.",
+                key: (
+                    "Стол"
+                    if item.original.strip() == "The"
+                    else "используется для улучшений."
                 )
+                for key, item in items.items()
             }
 
         engine = _Engine(translate)
@@ -332,7 +421,6 @@ class TranslationServiceRegressionTests(unittest.TestCase):
         source = "The value is zero.$(p)Apotheosis changes the default."
 
         def translate(items):
-            item = next(iter(items.values()))
             return {
                 item.key: item.original.replace(
                     "The value is zero.",
@@ -341,6 +429,7 @@ class TranslationServiceRegressionTests(unittest.TestCase):
                     "Apotheosis changes the default.",
                     "Apotheosis изменяет значение по умолчанию.",
                 )
+                for item in items.values()
             }
 
         result = _Service(
@@ -448,6 +537,24 @@ class TranslationServiceRegressionTests(unittest.TestCase):
 
         self.assertEqual(result, {"key": translated})
         self.assertIn((f" > {source} -> {translated}", "dim"), logs)
+
+    def test_rejection_log_keeps_full_source_and_candidate_text(self):
+        source = "A deliberately invalid long source " * 8
+        candidate = "still untranslated invalid candidate " * 8
+        logs = []
+        _Service(
+            _Engine(lambda items: {next(iter(items)): candidate}),
+            _MemoryCache(),
+            _Config(),
+        ).translate_dict(
+            {"key": source},
+            TARGET_LANG,
+            _callbacks(logs),
+        )
+
+        rejection = next(message for message, _tag in logs if "Отклонён" in message)
+        self.assertIn(repr(source), rejection)
+        self.assertIn(repr(candidate), rejection)
 
     def test_short_technical_identity_is_not_retranslated(self):
         cache = _MemoryCache()
@@ -938,6 +1045,18 @@ class TranslationCacheIdentityTests(unittest.TestCase):
                 )
             finally:
                 os.chdir(previous_cwd)
+
+    def test_scoped_identity_returns_only_the_original_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ai_cache.json")
+            cache = TranslationCache(path)
+            scoped_source = "␞book|page|part-1␟1 MB"
+            cache.set_identity("ru", scoped_source)
+
+            self.assertEqual(
+                cache.get("ru", scoped_source),
+                ("1 MB", False),
+            )
 
 
 if __name__ == "__main__":

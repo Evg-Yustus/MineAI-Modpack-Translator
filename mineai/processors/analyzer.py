@@ -45,6 +45,44 @@ from mineai.text_processing import (
 )
 
 
+_BOOK_TYPE_LABELS = {
+    "guideme-v2": "GuideME",
+    "ie-manual-v1": "Immersive Engineering Manual",
+    "markdown-v2": "Markdown / MDX",
+    "modonomicon-json-v1": "Modonomicon",
+    "patchouli-book-json": "Patchouli",
+    "oracle-index-mdx": "Oracle Index",
+    "oracle-index-meta-json": "Oracle Index",
+    "properties-v1": "Properties / Lang",
+    "xml-text-v1": "XML",
+}
+
+
+def _book_type_label(adapter_id: str | None, logical_path: str) -> str:
+    if adapter_id in _BOOK_TYPE_LABELS:
+        return _BOOK_TYPE_LABELS[adapter_id]
+    normalized = logical_path.replace("\\", "/").casefold()
+    if "/modonomicon/books/" in normalized:
+        return "Modonomicon"
+    if "/patchouli_books/" in normalized:
+        return "Patchouli"
+    if "/oracle_index/books/" in normalized:
+        return "Oracle Index"
+    if normalized.endswith((".md", ".mdx", ".markdown")):
+        return "Markdown / MDX"
+    if normalized.endswith((".lang", ".properties")):
+        return "Properties / Lang"
+    if normalized.endswith(".xml"):
+        return "XML"
+    return "JSON-книга"
+
+
+def _book_kind(book_types: set[str]) -> str:
+    if not book_types:
+        return "Книги"
+    return "Книги · " + " / ".join(sorted(book_types))
+
+
 class ModpackAnalyzer:
     def __init__(self, state: JobState) -> None:
         self.state = state
@@ -413,6 +451,7 @@ class ModpackAnalyzer:
         include_companion_lang=True,
     ):
         b_en = b_tr = m_en = m_tr = 0
+        book_types: set[str] = set()
         companion_prefixes = self.format_registry.companion_lang_prefixes(
             [item.filename for item in zin.infolist()]
         )
@@ -487,6 +526,8 @@ class ModpackAnalyzer:
                     )
                     m_en += len(source)
                     m_tr += len(source) - len(pending)
+                    if source:
+                        book_types.add("Языковые ключи")
                 except (json.JSONDecodeError, OSError):
                     pass
             elif is_modonomicon:
@@ -502,6 +543,10 @@ class ModpackAnalyzer:
                         target_path_hint=item.filename,
                     )
                     b_en += len(plan.units)
+                    if plan.units:
+                        book_types.add(
+                            _book_type_label(plan.adapter_id, item.filename)
+                        )
                 except (OSError, ValueError):
                     pass
             elif (
@@ -525,6 +570,10 @@ class ModpackAnalyzer:
                         target_path_hint=upstream_target,
                     )
                     b_en += len(plan.units)
+                    if plan.units:
+                        book_types.add(
+                            _book_type_label(plan.adapter_id, item.filename)
+                        )
                     target_key = upstream_target.casefold()
                     if target_key in locale:
                         target_text = zin.read(locale[target_key]).decode(
@@ -569,6 +618,8 @@ class ModpackAnalyzer:
                             )
                             b_en += len(source_map)
                             b_tr += max(0, len(source_map) - len(pending))
+                            if source_map:
+                                book_types.add("Patchouli")
                         except (json.JSONDecodeError, OSError):
                             pass
             elif is_jb:
@@ -588,6 +639,8 @@ class ModpackAnalyzer:
                     )
                     b_en += len(source_map)
                     b_tr += max(0, len(source_map) - len(pending))
+                    if source_map:
+                        book_types.add("Patchouli")
                 except (json.JSONDecodeError, OSError):
                     pass
             elif is_mb:
@@ -602,6 +655,10 @@ class ModpackAnalyzer:
                     tr_path = (plan.target_path or markdown_target).lower()
                     tr_t = zin.read(locale[tr_path]).decode("utf-8-sig", errors="ignore") if tr_path in locale else ""
                     m_en += len(plan.units)
+                    if plan.units:
+                        book_types.add(
+                            _book_type_label(plan.adapter_id, item.filename)
+                        )
                     if tr_t:
                         target_plan = self.format_registry.plan(
                             plan.target_path or markdown_target,
@@ -626,7 +683,7 @@ class ModpackAnalyzer:
                 scope="books",
                 icon="📚",
                 name=mod_name,
-                kind="Книги",
+                kind=_book_kind(book_types),
                 translated=total_tr,
                 total=total_en,
                 percent=int(total_tr / total_en * 100),
@@ -682,8 +739,10 @@ class ModpackAnalyzer:
                 },
             )
             total = len(source_map)
+            book_kind = _book_kind({_book_type_label(None, path)})
         else:
             total = count_translatable_lang_entries(source)
+            book_kind = ""
             pending = collect_lang_keys_to_translate(
                 source,
                 target,
@@ -704,7 +763,7 @@ class ModpackAnalyzer:
                 ),
                 name=os.path.relpath(path, mc_dir),
                 kind=(
-                    "Книги" if scope == "books"
+                    book_kind if scope == "books"
                     else "Квесты" if scope == "quests"
                     else "Интерфейс"
                 ),
@@ -735,6 +794,9 @@ class ModpackAnalyzer:
                 target_path_hint=target_path,
             )
             pending = {unit.id for unit in plan.units}
+            book_kind = _book_kind(
+                {_book_type_label(plan.adapter_id, path)}
+            )
             if os.path.exists(target_path):
                 with open(target_path, encoding="utf-8-sig") as target_handle:
                     target_text = target_handle.read()
@@ -761,7 +823,7 @@ class ModpackAnalyzer:
                 scope="books",
                 icon="📚",
                 name=os.path.relpath(path, mc_dir),
-                kind="Книги",
+                kind=book_kind,
                 translated=translated,
                 total=total,
                 percent=int(translated / total * 100),

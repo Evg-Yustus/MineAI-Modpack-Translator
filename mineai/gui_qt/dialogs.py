@@ -38,7 +38,10 @@ from PyQt6.QtWidgets import (
 )
 
 from mineai.constants import DEFAULT_OPENROUTER_MODEL, LANGUAGES
-from mineai.engines.lmstudio import list_lmstudio_models, normalize_lmstudio_base_url
+from mineai.engines.lmstudio import (
+    list_loaded_lmstudio_models,
+    normalize_lmstudio_base_url,
+)
 from mineai.engines.llm_common import get_default_prompts, load_prompts, save_prompts
 from mineai.processors.migration import run_migration
 from mineai.gui_qt.bridge import LmStudioSignals, MigrationSignals
@@ -418,7 +421,7 @@ class SettingsDialog(QDialog):
 
         def task() -> None:
             try:
-                models = list_lmstudio_models(base_url, api_key=api_key)
+                models = list_loaded_lmstudio_models(base_url, api_key=api_key)
             except Exception as exc:
                 self._lmstudio_signals.finished.emit(False, [], str(exc))
             else:
@@ -443,7 +446,7 @@ class SettingsDialog(QDialog):
         current = self.lm_model.currentText().strip()
         self.lm_model.clear()
         self.lm_model.addItems(models)
-        if current:
+        if current in models:
             self.lm_model.setCurrentText(current)
         elif models:
             self.lm_model.setCurrentIndex(0)

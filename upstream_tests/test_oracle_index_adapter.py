@@ -30,6 +30,9 @@ Use `demo:machine` in configs.
         self.assertFalse(
             self.adapter.matches("oracle_index/books/demo/.translated/ru_ru/.content/start.mdx")
         )
+        self.assertFalse(
+            self.adapter.matches("oracle_index/books/demo/translated/ja_jp/content/start.mdx")
+        )
         self.assertEqual(
             self.adapter.target_path(self.path, "ru_ru"),
             "oracle_index/books/demo/.translated/ru_ru/.content/start.mdx",
@@ -72,6 +75,7 @@ class OracleIndexMetaJsonAdapterTests(unittest.TestCase):
         self.assertIn('"machines": "ТЕСТ Machines"', output)
         self.assertIn('"start.mdx": "ТЕСТ Getting Started"', output)
         self.assertFalse(adapter.matches("oracle_index/books/demo/.translated/zh_cn/.content/_meta.json"))
+        self.assertFalse(adapter.matches("oracle_index/books/demo/translated/zh_cn/content/_meta.json"))
 
 
 if __name__ == "__main__":

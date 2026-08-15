@@ -7,6 +7,7 @@ single source of truth for translation behavior.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 import sys
 import threading
@@ -54,7 +55,15 @@ from mineai.gui_qt.dialogs import (
 )
 from mineai.gui_qt.i18n import t, translator
 from mineai.gui_qt.i18n_runtime import tr as rt
-from mineai.gui_qt.log_model import LogEntry, LogSegment, entry_from_message, matches_entry, split_translation_message
+from mineai.gui_qt.log_model import (
+    LogEntry,
+    LogSegment,
+    entry_from_message,
+    format_persisted_log_line,
+    format_session_header,
+    matches_entry,
+    split_translation_message,
+)
 from mineai.gui_qt.theme import theme_qss
 from mineai.gui_qt.view_model import ENGINE_OPTIONS, compact_runtime_status, dashboard_columns, detected_source_roots, engine_readiness, format_duration, stats_from_snapshot
 from mineai.gui_qt.widgets import Card, ElidedLabel, HelpMarker, LabeledValue, ScrollSafeComboBox, ScrollSafeSpinBox, SegmentedProgressBar, StatCard, StatusPill
@@ -125,6 +134,7 @@ class TranslatorQtWindow(QMainWindow):
         self._log_file = None
         try:
             self._log_file = LOG_PATH.open("a", encoding="utf-8", buffering=1)
+            self._log_file.write(format_session_header(__version__, datetime.now()))
         except OSError:
             self._log_file = None
 
@@ -638,7 +648,7 @@ class TranslatorQtWindow(QMainWindow):
         save.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         clear.setToolTip(t("button.clear"))
         save.setToolTip(t("button.export_log"))
-        clear.clicked.connect(self._clear_log)
+        clear.clicked.connect(self._confirm_clear_log)
         save.clicked.connect(self._save_log)
 
         toolbar.addWidget(self.log_filter, 0, 0)
@@ -1281,7 +1291,9 @@ class TranslatorQtWindow(QMainWindow):
             del self._log_entries[: len(self._log_entries) - MAX_LOG_ENTRIES]
         if persist and self._log_file is not None:
             try:
-                self._log_file.write(entry.plain_text + "\n")
+                self._log_file.write(
+                    format_persisted_log_line(entry, datetime.now()) + "\n"
+                )
             except OSError:
                 pass
         if hasattr(self, "log_filter") and self._log_entry_visible(entry):
@@ -1295,21 +1307,26 @@ class TranslatorQtWindow(QMainWindow):
     def _display_segments_for_entry(self, entry: LogEntry) -> tuple[LogSegment, ...]:
         """Return a compact pixel-aware preview without mutating the raw log entry."""
         if (
-            entry.category != "translated"
-            or not hasattr(self, "log_full_lines")
+            not hasattr(self, "log_full_lines")
             or self.log_full_lines.isChecked()
             or len(entry.segments) != 1
         ):
             return entry.segments
 
         parts = split_translation_message(entry.plain_text)
-        if parts is None:
-            return entry.segments
-
         metrics = self.log_view.fontMetrics()
         available = max(320, self.log_view.viewport().width() - 24)
         if metrics.horizontalAdvance(entry.plain_text) <= available:
             return entry.segments
+
+        if parts is None:
+            compact = entry.plain_text.replace("\r\n", " ↩ ").replace("\n", " ↩ ")
+            preview = metrics.elidedText(
+                compact,
+                Qt.TextElideMode.ElideRight,
+                available,
+            )
+            return (LogSegment(preview, entry.segments[0].color),)
 
         separator_width = metrics.horizontalAdvance(parts.separator + parts.suffix)
         content_width = max(160, available - separator_width)
@@ -1364,6 +1381,19 @@ class TranslatorQtWindow(QMainWindow):
     def _clear_log(self) -> None:
         self._log_entries.clear()
         self.log_view.clear()
+
+    def _confirm_clear_log(self) -> None:
+        if not self._log_entries:
+            return
+        answer = QMessageBox.question(
+            self,
+            t("log.clear_title"),
+            t("log.clear_confirmation"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._clear_log()
 
     def _save_log(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, t("button.export_log"), "mineai_log_export.txt", "Text files (*.txt);;All files (*)")

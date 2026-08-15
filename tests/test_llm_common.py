@@ -2,6 +2,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import requests
 
@@ -17,6 +18,8 @@ with tempfile.TemporaryDirectory() as _import_cwd:
             BatchLlmEngine,
             build_translation_prompt,
             dump_ai_error,
+            get_default_prompts,
+            load_prompts,
             placeholders_match,
             repair_markers,
         )
@@ -79,6 +82,43 @@ class ServiceWithEngine(TranslationService):
 
 
 class BatchLlmEngineTests(unittest.TestCase):
+    def test_complex_chunk_reassembly_preserves_boundary_spaces(self) -> None:
+        source = " ".join(f"word{index} [#{index}#]" for index in range(21))
+
+        def call_api(prompt: str, _limit: int) -> str:
+            return prompt.split("TEXT TO TRANSLATE:\n", 1)[1]
+
+        engine = BatchLlmEngine(call_api=call_api)
+        item = EngineItem("entry", source, source)
+
+        result = engine.translate_batch(
+            {"entry": item},
+            TARGET_LANG,
+            callbacks(),
+        )
+
+        self.assertEqual(result, {"entry": source})
+
+    def test_old_bundled_prompts_are_upgraded_without_overwriting_custom_text(self) -> None:
+        old = {
+            "mods": "Translate the following JSON string values from English to {lang_name}.",
+            "books": "Мой пользовательский промпт {lang_name}",
+            "quests": "Ты локализатор Minecraft. Переведи строки мода/квеста «{context}» на {lang_name}. Сохраняй игровой стиль и лор.",
+            "technical": "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly. If a word is wrapped like [#0#]Word[#1#], wrap the translation like [#0#]Слово[#1#]. DO NOT drop any markers.\n3. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside the JSON strings.\n4. Output ONLY raw valid JSON. No markdown formatting, no explanations, no intro text.",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "prompts.json")
+            with open(path, "w", encoding="utf-8") as stream:
+                json.dump(old, stream, ensure_ascii=False)
+            with mock.patch("mineai.engines.llm_common.PROMPTS_FILE", path):
+                loaded = load_prompts()
+
+        defaults = get_default_prompts()
+        self.assertEqual(loaded["mods"], defaults["mods"])
+        self.assertEqual(loaded["quests"], defaults["quests"])
+        self.assertEqual(loaded["technical"], defaults["technical"])
+        self.assertEqual(loaded["books"], old["books"])
+
     def test_finalizer_restores_source_boundary_newline(self) -> None:
         source = "Description\r\n"
         masked, mapping = mask_protected_fragments(source)

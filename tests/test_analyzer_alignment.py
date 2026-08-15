@@ -79,7 +79,7 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (2, 0))
         self.assertEqual(estimated, 2)
-        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 2, 0)])
+        self.assertEqual(rows, [("📚", "Example", "Книги · Patchouli", 0, 2, 0)])
 
     def test_nonlocalized_research_json_is_ignored_by_both(self) -> None:
         path = self._make_jar({
@@ -104,7 +104,7 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (2, 0))
         self.assertEqual(estimated, 2)
-        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 2, 0)])
+        self.assertEqual(rows, [("📚", "Example", "Книги · Patchouli", 0, 2, 0)])
 
     def test_oracle_index_book_is_counted_by_analysis_and_estimator(self) -> None:
         path = self._make_jar({
@@ -117,7 +117,7 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (2, 0))
         self.assertEqual(estimated, 2)
-        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 2, 0)])
+        self.assertEqual(rows, [("📚", "Example", "Книги · Oracle Index", 0, 2, 0)])
 
     def test_explicitly_localized_text_is_counted_outside_book_folders(self) -> None:
         path = self._make_jar({
@@ -128,7 +128,7 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (1, 0))
         self.assertEqual(estimated, 1)
-        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 1, 0)])
+        self.assertEqual(rows, [("📚", "Example", "Книги · Markdown / MDX", 0, 1, 0)])
 
     def test_legacy_lang_file_is_counted_as_mod_interface(self) -> None:
         path = self._make_jar({
@@ -233,7 +233,7 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (1, 0))
         self.assertEqual(estimated, 1)
-        self.assertEqual(rows, [("📚", "Example", "Книги", 0, 1, 0)])
+        self.assertEqual(rows, [("📚", "Example", "Книги · Markdown / MDX", 0, 1, 0)])
 
     def test_wrapped_markdown_paragraph_is_one_translated_unit(self) -> None:
         path = self._make_jar({
@@ -251,7 +251,7 @@ class AnalyzerEstimatorAlignmentTests(unittest.TestCase):
 
         self.assertEqual(analyzed, (1, 1))
         self.assertEqual(estimated, 1)
-        self.assertEqual(rows, [("📚", "Example", "Книги", 1, 1, 100)])
+        self.assertEqual(rows, [("📚", "Example", "Книги · Markdown / MDX", 1, 1, 100)])
 
     def test_unrelated_asset_directories_are_not_mistaken_for_books(self) -> None:
         path = self._make_jar({

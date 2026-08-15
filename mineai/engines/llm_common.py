@@ -25,21 +25,51 @@ RETRY_BATCH_SIZES = (10, 5, 1)
 
 PROMPTS_FILE = "prompts.json"
 
+_LEGACY_DEFAULT_PROMPTS = {
+    "mods": {
+        "Translate the following JSON string values from English to {lang_name}.",
+    },
+    "books": {
+        "Ты локализатор Minecraft. Переведи текст книги/справочника на {lang_name}. Сохраняй игровой лор и литературный стиль.",
+    },
+    "quests": {
+        "Ты локализатор Minecraft. Переведи строки мода/квеста «{context}» на {lang_name}. Сохраняй игровой стиль и лор.",
+    },
+    "technical": {
+        "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly. If a word is wrapped like [#0#]Word[#1#], wrap the translation like [#0#]Слово[#1#]. DO NOT drop any markers.\n3. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside the JSON strings.\n4. Output ONLY raw valid JSON. No markdown formatting, no explanations, no intro text.",
+        "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly and in the same order. If a word is wrapped like [#0#]Word[#1#], wrap the translation like [#0#]Слово[#1#]. DO NOT drop, repeat or reorder markers.\n3. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside the JSON strings.\n4. Output ONLY raw valid JSON. No markdown formatting, no explanations, no intro text.",
+    },
+}
+
+
 def get_default_prompts() -> dict[str, str]:
     return {
-        "mods": "Translate the following JSON string values from English to {lang_name}.",
-        "books": "Ты локализатор Minecraft. Переведи текст книги/справочника на {lang_name}. Сохраняй игровой лор и литературный стиль.",
-        "quests": "Ты локализатор Minecraft. Переведи строки мода/квеста «{context}» на {lang_name}. Сохраняй игровой стиль и лор.",
-        "technical": "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly and in the same order. If a word is wrapped like [#0#]Word[#1#], wrap the translation like [#0#]Слово[#1#]. DO NOT drop, repeat or reorder markers.\n3. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside the JSON strings.\n4. Output ONLY raw valid JSON. No markdown formatting, no explanations, no intro text."
+        "mods": "Ты локализатор Minecraft. Переведи каждое переданное значение с английского на {lang_name}. Используй привычные термины Minecraft и не добавляй пояснений.",
+        "books": "Ты локализатор книг и справочников Minecraft. Переведи только переданные видимые текстовые узлы на {lang_name}, естественно и с учётом контекста «{context}». Не добавляй разметку, ссылки, теги, цвета, числа или переносы: программа восстанавливает их из оригинала.",
+        "quests": "Ты локализатор квестов Minecraft. Переведи каждое переданное название или описание из «{context}» на {lang_name}. Сохраняй игровой смысл, требования и терминологию; не добавляй новые факты.",
+        "technical": "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly and in the same order. Placeholders are immutable source fragments, including numbers and game codes. DO NOT drop, repeat, rename or reorder them.\n3. Translate every JSON value independently. Never merge neighboring values or copy one answer into another key.\n4. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside JSON strings.\n5. Output ONLY one raw valid JSON object with the original keys. No markdown, explanations or introductory text."
     }
+
 
 def load_prompts() -> dict[str, str]:
     if not os.path.exists(PROMPTS_FILE):
         save_prompts(get_default_prompts())
         return get_default_prompts()
     try:
-        with open(PROMPTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(PROMPTS_FILE, "r", encoding="utf-8-sig") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            return get_default_prompts()
+        defaults = get_default_prompts()
+        changed = False
+        for key, default in defaults.items():
+            current = loaded.get(key)
+            if current is None or current in _LEGACY_DEFAULT_PROMPTS.get(key, set()):
+                loaded[key] = default
+                changed = True
+        if changed:
+            save_prompts(loaded)
+        return loaded
     except Exception:
         return get_default_prompts()
 
@@ -521,6 +551,11 @@ class BatchLlmEngine(TranslationEngine):
                         if raw:
                             raw = _fix_marker_typos(raw, sub_text)
                             
+                        if raw:
+                            raw = polish_translation(
+                                raw,
+                                boundary_source=sub_text,
+                            )
                         if raw and placeholders_match(raw, sub_text):
                             translated_parts.append(raw)
                             chunk_ok = True
@@ -531,7 +566,12 @@ class BatchLlmEngine(TranslationEngine):
                                 self._call_api, sub_text, raw, self.max_tokens
                             )
                             if fixed is not None:
-                                translated_parts.append(fixed)
+                                translated_parts.append(
+                                    polish_translation(
+                                        fixed,
+                                        boundary_source=sub_text,
+                                    )
+                                )
                                 chunk_ok = True
                                 break
                     except requests.RequestException:

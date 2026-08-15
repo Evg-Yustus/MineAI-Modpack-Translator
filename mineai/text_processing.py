@@ -51,6 +51,27 @@ COMPOUND_TECHNICAL_TOKEN_PATTERN = re.compile(
     r"(?![A-Za-z0-9])"
 )
 
+NUMERIC_FRAGMENT_PATTERN = re.compile(
+    r"(?<!\ue100)(?<![A-Za-z0-9_#])"
+    r"[-+]?\d+(?:[\u00a0 ,._:/-]\d+)*(?:\s?%)?"
+    r"(?![A-Za-z0-9_#])"
+    r"|(?<!\ue100)(?<![A-Za-z0-9_#])"
+    r"[-+]?\d+(?:[.,]\d+)?"
+    r"(?=(?:mB|MB|GB|TB|KiB|MiB|GiB|RF|FE|EU|J|W|kW|MW|Hz|kHz|MHz|RPM)\b)",
+    flags=re.IGNORECASE,
+)
+
+_NUMERIC_VALUE_PATTERN = re.compile(
+    r"[-+]?\d+(?:[\u00a0 ,._:/-]\d+)*(?:\s?%)?",
+)
+
+_NUMERIC_UNIT_VALUE_PATTERN = re.compile(
+    r"[-+]?\d+(?:[.,]\d+)?\s*"
+    r"(?:mB|MB|GB|TB|KiB|MiB|GiB|RF(?:/t)?|FE(?:/t)?|EU(?:/t)?|"
+    r"J|W|kW|MW|Hz|kHz|MHz|RPM)",
+    flags=re.IGNORECASE,
+)
+
 JSON_TEXT_VALUE_PATTERN = re.compile(
     r'(?P<prefix>\\?"text\\?"\s*:\s*\\?")'
     r'(?P<value>.*?)'
@@ -274,6 +295,7 @@ def mask_protected_fragments(text: str) -> tuple[str, dict[str, str]]:
     text = MARKDOWN_ITALIC_PATTERN.sub(protect_italic, text)
     text = FORMAT_PATTERN.sub(replacer, text)
     text = COMPOUND_TECHNICAL_TOKEN_PATTERN.sub(replacer, text)
+    text = NUMERIC_FRAGMENT_PATTERN.sub(replacer, text)
     masked = IGNORE_PATTERN.sub(replacer, text)
     masked = re.sub(r"\s+", " ", masked).strip()
     for internal, public in internal_tokens.items():
@@ -284,6 +306,11 @@ def mask_protected_fragments(text: str) -> tuple[str, dict[str, str]]:
 def structural_fragments(text: str) -> tuple[str, ...]:
     """Return ordered game/markup codes that translation must not move or invent."""
     return tuple(match.group(0) for match in STRUCTURAL_FRAGMENT_PATTERN.finditer(text))
+
+
+def numeric_fragments(text: str) -> tuple[str, ...]:
+    """Return exact numeric fragments in source order for hallucination checks."""
+    return tuple(match.group(0) for match in NUMERIC_FRAGMENT_PATTERN.finditer(text))
 
 
 def translation_length_issue(source: str, candidate: str) -> str | None:
@@ -426,6 +453,23 @@ def is_technical_term(text: str) -> bool:
         "kubejs_",
     )
     return any(lower.startswith(prefix) for prefix in prefixes)
+
+
+@lru_cache(maxsize=10000)
+def is_nontranslatable_value(text: str) -> bool:
+    """Return values that must be copied exactly without any translator call."""
+    if not text or not text.strip():
+        return True
+    stripped = text.strip()
+    if _NUMERIC_VALUE_PATTERN.fullmatch(stripped):
+        return True
+    if _NUMERIC_UNIT_VALUE_PATTERN.fullmatch(stripped):
+        return True
+    if re.fullmatch(r"(?:[A-Z]{1,8}|[a-z]{1,4})\d+", stripped):
+        return True
+    marker_free = PLACEHOLDER_PATTERN.sub("", stripped)
+    marker_free = re.sub(r"⟦FK\d{4}⟧", "", marker_free)
+    return not re.search(r"[A-Za-zА-Яа-яЁё]", marker_free)
 
 
 def is_article_removed_technical_translation(

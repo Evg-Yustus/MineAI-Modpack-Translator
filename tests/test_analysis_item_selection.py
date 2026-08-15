@@ -153,6 +153,8 @@ class AnalyzerSelectionContractTests(unittest.TestCase):
             )
 
         self.assertEqual({item.scope for item in items}, {"mods", "books"})
+        book_item = next(item for item in items if item.scope == "books")
+        self.assertIn("Patchouli", book_item.kind)
         self.assertEqual(
             {item.key for item in items},
             {

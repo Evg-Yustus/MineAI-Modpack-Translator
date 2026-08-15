@@ -61,8 +61,8 @@ class _TranslationServiceStub:
 
 
 class StructuredDocumentRegressionTests(unittest.TestCase):
-    def test_release_version_is_beta37(self) -> None:
-        self.assertEqual(__version__, "10.0.0 - BETAv38")
+    def test_release_version_is_beta39(self) -> None:
+        self.assertEqual(__version__, "10.0.0 - BETAv39")
 
     def test_common_structured_document_module_exists(self) -> None:
         self.assertIsNotNone(importlib.util.find_spec("mineai.formats.document"))

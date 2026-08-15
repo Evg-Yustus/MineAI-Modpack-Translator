@@ -11,8 +11,12 @@ from .minecraft_text import MinecraftTextComponentAdapter
 
 
 _BOOK_ROOT_RE = re.compile(r"(^|/)(oracle_index/books/[^/]+)(/.*)$", re.IGNORECASE)
-_MDX_RE = re.compile(r"(^|/)oracle_index/books/[^/]+/(?!\.translated/).+\.mdx$", re.IGNORECASE)
-_META_RE = re.compile(r"(^|/)oracle_index/books/[^/]+/(?!\.translated/).*/?_meta\.json$", re.IGNORECASE)
+_MDX_RE = re.compile(r"(^|/)oracle_index/books/[^/]+/.+\.mdx$", re.IGNORECASE)
+_META_RE = re.compile(r"(^|/)oracle_index/books/[^/]+/.*/?_meta\.json$", re.IGNORECASE)
+_LOCALIZED_TREE_RE = re.compile(
+    r"(^|/)oracle_index/books/[^/]+/(?:\.translated|translated)/",
+    re.IGNORECASE,
+)
 
 
 def _target_path(path: str, target_code: str) -> str:
@@ -34,7 +38,7 @@ class OracleIndexMdxAdapter(GuideMeMarkdownAdapter):
 
     def matches(self, path: str) -> bool:
         slash = "/" + path.replace("\\", "/").lstrip("/")
-        return bool(_MDX_RE.search(slash))
+        return not _LOCALIZED_TREE_RE.search(slash) and bool(_MDX_RE.search(slash))
 
     def target_path(self, path: str, target_code: str) -> str:
         if not self.matches(path):
@@ -61,7 +65,7 @@ class OracleIndexMetaJsonAdapter:
 
     def matches(self, path: str) -> bool:
         slash = "/" + path.replace("\\", "/").lstrip("/")
-        return bool(_META_RE.search(slash))
+        return not _LOCALIZED_TREE_RE.search(slash) and bool(_META_RE.search(slash))
 
     def target_path(self, path: str, target_code: str) -> str:
         if not self.matches(path):

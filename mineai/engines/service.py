@@ -2,6 +2,7 @@
 from collections.abc import Callable
 import re
 import requests
+from formatkit.contracts import ANCHOR_PATTERN
 from mineai.cache import TranslationCache
 from mineai.config import ConfigManager
 from mineai.constants import DEFAULT_OPENROUTER_MODEL
@@ -15,7 +16,6 @@ from mineai.formats.rich_text import (
     contains_unsafe_formatting,
     parse_rich_text,
 )
-from formatkit.contracts import ANCHOR_PATTERN, FormatValidationError
 from mineai.language_validation import (
     has_long_untranslated_english_fragment,
     has_untranslated_leading_article,
@@ -27,8 +27,10 @@ from mineai.text_processing import (
     apply_smart_glue,
     count_line_breaks,
     is_article_removed_technical_translation,
+    is_nontranslatable_value,
     is_technical_term,
     mask_protected_fragments,
+    numeric_fragments,
     structural_fragments,
     translation_length_issue,
 )
@@ -59,40 +61,6 @@ def _fragment_pattern(fragment: str) -> str:
     if re.fullmatch(r"[A-Za-z]{1,4}", fragment):
         return r"(?<![A-Za-z])" + re.escape(fragment) + r"(?![A-Za-z])"
     return re.escape(fragment)
-
-
-def _count_protected_fragments(
-    text: str,
-    fragments: list[str],
-) -> Counter:
-    """Count longest fragments first so RF inside RF/t is not counted twice."""
-    counts: Counter = Counter()
-    occupied = [False] * len(text)
-    for fragment in sorted(set(fragments), key=lambda value: (-len(value), value)):
-        for match in re.finditer(_fragment_pattern(fragment), text):
-            start, end = match.span()
-            if any(occupied[start:end]):
-                continue
-            occupied[start:end] = [True] * (end - start)
-            counts[fragment] += 1
-    return counts
-
-
-def _protected_fragment_sequence(
-    text: str,
-    fragments: list[str],
-) -> tuple[str, ...]:
-    """Return non-overlapping protected fragments in their textual order."""
-    occupied = [False] * len(text)
-    located: list[tuple[int, str]] = []
-    for fragment in sorted(set(fragments), key=lambda value: (-len(value), value)):
-        for match in re.finditer(_fragment_pattern(fragment), text):
-            start, end = match.span()
-            if any(occupied[start:end]):
-                continue
-            occupied[start:end] = [True] * (end - start)
-            located.append((start, fragment))
-    return tuple(fragment for _start, fragment in sorted(located))
 
 
 def _can_cache_identity(original: str) -> bool:
@@ -190,24 +158,6 @@ def _split_fallback_text(text: str, max_chars: int = 480) -> list[str]:
     return chunks
 
 
-def _render_validation_error(template, candidate: str) -> str | None:
-    try:
-        template.render_translation(candidate)
-    except FormatValidationError as exc:
-        return f"FormatKit: {exc}"
-    return None
-
-
-def _formatted_candidate_error(template, candidate: str) -> str | None:
-    if any(
-        contains_unsafe_formatting(segment)
-        for segment in ANCHOR_PATTERN.split(candidate)
-        if segment
-    ):
-        return "FormatKit: translated prose introduced formatting syntax"
-    return _render_validation_error(template, candidate)
-
-
 def _validate_candidate(
     item: EngineItem,
     candidate: object,
@@ -237,11 +187,13 @@ def _validate_candidate(
             f"{original_breaks} -> {candidate_breaks}",
             False,
         )
-    expected_fragments = Counter(item.mapping.values())
-    actual_fragments = _count_protected_fragments(
-        candidate,
-        list(expected_fragments),
-    )
+    if numeric_fragments(candidate) != numeric_fragments(item.original):
+        return False, "изменены числовые значения", False
+    expected_sequence = tuple(item.mapping.values())
+    expected_fragments = Counter(expected_sequence)
+    _candidate_masked, candidate_mapping = mask_protected_fragments(candidate)
+    candidate_sequence = tuple(candidate_mapping.values())
+    actual_fragments = Counter(candidate_sequence)
     for fragment, expected_count in expected_fragments.items():
         actual_count = actual_fragments[fragment]
         if actual_count != expected_count:
@@ -251,10 +203,10 @@ def _validate_candidate(
                 f"ожидалось {expected_count}, получено {actual_count}",
                 False,
             )
-    fragments = list(expected_fragments)
-    if _protected_fragment_sequence(
-        candidate, fragments
-    ) != _protected_fragment_sequence(item.original, fragments):
+    relevant_sequence = tuple(
+        fragment for fragment in candidate_sequence if fragment in expected_fragments
+    )
+    if relevant_sequence != expected_sequence:
         return False, "изменён порядок защищённых фрагментов", False
     if structural_fragments(candidate) != structural_fragments(item.original):
         return False, "изменён порядок или набор кодов форматирования", False
@@ -457,9 +409,10 @@ class TranslationService:
             ok, reason, identity = validate(owner_key, item, text)
             if not ok:
                 failure_reasons[owner_key] = f"{source_label}: {reason}"
-                preview = repr(text)[:120] if text is not None else "None"
+                candidate_text = repr(text) if text is not None else "None"
                 callbacks.on_log(
-                    f"❌ Отклонён {item.original[:70]!r}: {reason}; ответ={preview}",
+                    f"❌ Отклонён {item.original!r}: {reason}; "
+                    f"ответ={candidate_text}",
                     "red",
                 )
                 return False
@@ -501,7 +454,7 @@ class TranslationService:
             callbacks.wait_if_paused()
             if smart_glue:
                 text = apply_smart_glue(text)
-            if is_technical_term(text):
+            if is_technical_term(text) or is_nontranslatable_value(text):
                 technical_cache_source = _scoped_cache_source(
                     text,
                     (cache_contexts or {}).get(key, ""),
@@ -586,7 +539,7 @@ class TranslationService:
                     break
                 callbacks.on_log(
                     f"⚠️ Запись {cache_label or 'кэша'} отброшена "
-                    f"для {text[:70]!r}: {reason}",
+                    f"для {text!r}: {reason}",
                     "yellow",
                 )
                 candidate_cache.discard(
@@ -933,7 +886,7 @@ class TranslationService:
                 
             reason = failure_reasons.get(owner_key, "нет результата")
             callbacks.on_log(
-                f"⚠️ Строка не переведена: {item.original[:90]!r}; {reason}",
+                f"⚠️ Строка не переведена: {item.original!r}; {reason}",
                 "yellow",
             )
             bump(len(output_keys))
@@ -972,16 +925,18 @@ class TranslationService:
         }
         flat: dict[str, str] = {}
         cache_contexts: dict[str, str] = {}
+        part_refs: dict[str, tuple[str, int]] = {}
 
         for key, template in templates.items():
-            payload, _anchors = template.translation_payload()
-            visible = ANCHOR_PATTERN.sub(" ", payload)
-            if not re.search(r"[A-Za-z]", visible):
-                continue
-            if is_technical_term(visible):
-                continue
-            flat[key] = payload
-            cache_contexts[key] = f"{context}|{key}|text"
+            for part in template.translatable_parts():
+                if not re.search(r"[A-Za-z]", part.text):
+                    continue
+                part_key = f"{key}::part::{part.index}"
+                flat[part_key] = part.text
+                cache_contexts[part_key] = (
+                    f"{context}|{key}|text-part-{part.index}"
+                )
+                part_refs[part_key] = (key, part.index)
 
         inner_callbacks = EngineCallbacks(
             should_run=callbacks.should_run,
@@ -999,8 +954,10 @@ class TranslationService:
             prompt_type=prompt_type,
             cache_contexts=cache_contexts,
             candidate_validators={
-                key: lambda candidate, template=templates[key]: (
-                    _formatted_candidate_error(template, candidate)
+                key: lambda candidate: (
+                    "FormatKit: translated prose introduced formatting syntax"
+                    if contains_unsafe_formatting(candidate)
+                    else None
                 )
                 for key in flat
             },
@@ -1008,44 +965,42 @@ class TranslationService:
 
         failed_roots: set[str] = set()
         result: dict[str, str] = {}
-        for key, source in strings.items():
-            payload = flat.get(key)
-            if payload is None:
-                result[key] = source
-                continue
-            candidate = translated.get(key, payload)
-            visible_segments = ANCHOR_PATTERN.split(candidate)
-            if any(
-                contains_unsafe_formatting(segment)
-                for segment in visible_segments
-                if segment
-            ):
+        translated_parts: dict[str, dict[int, str]] = {
+            key: {} for key in strings
+        }
+        for part_key, (root_key, part_index) in part_refs.items():
+            source_part = flat[part_key]
+            candidate = translated.get(part_key, source_part)
+            if contains_unsafe_formatting(candidate):
                 callbacks.on_log(
-                    f"⚠️ Форматирование в текстовом узле {key!r} "
+                    f"⚠️ Форматирование в текстовом узле {part_key!r} "
                     "отклонено; исходная разметка сохранена",
                     "yellow",
                 )
                 self.cache.discard(
                     target_lang["api"],
-                    _scoped_cache_source(payload, cache_contexts[key]),
+                    _scoped_cache_source(
+                        source_part,
+                        cache_contexts[part_key],
+                    ),
                 )
-                candidate = payload
-            try:
-                result[key] = templates[key].render_translation(candidate)
-            except FormatValidationError:
-                self.cache.discard(
-                    target_lang["api"],
-                    _scoped_cache_source(payload, cache_contexts[key]),
-                )
-                result[key] = source
-            if result[key] == source:
-                failed_roots.add(key)
+                candidate = source_part
+            translated_parts[root_key][part_index] = candidate
+            if (
+                candidate == source_part
+                and not is_technical_term(source_part)
+                and not is_nontranslatable_value(source_part)
+            ):
+                failed_roots.add(root_key)
+
+        for key, source in strings.items():
+            result[key] = templates[key].render(translated_parts[key])
             if not callbacks.should_run():
                 continue
             if callbacks.on_progress:
                 callbacks.on_progress(1)
             if callbacks.on_metric:
-                if key not in flat:
+                if not translated_parts[key]:
                     callbacks.on_metric("protected", 1)
                 elif key in failed_roots:
                     callbacks.on_metric("failed", 1)

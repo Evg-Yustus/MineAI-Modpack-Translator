@@ -1,12 +1,13 @@
 ﻿import os
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QApplication, QToolButton
+    from PyQt6.QtWidgets import QApplication, QMessageBox, QToolButton
     from mineai.config import settings
     from mineai.gui_qt.dialogs import SettingsDialog
     from mineai.gui_qt.log_model import entry_from_message
@@ -15,6 +16,7 @@ try:
 except ImportError:
     Qt = None
     QApplication = None
+    QMessageBox = None
     QToolButton = None
     settings = None
     SettingsDialog = None
@@ -191,6 +193,86 @@ class WheelSafetyTests(unittest.TestCase):
             self.assertIn("Экспорт лога" if window._ui_language == "ru" else "Export log", tooltips)
             self.assertNotIn("Открыть лог", tooltips)
             self.assertNotIn("Open log", tooltips)
+        finally:
+            window.close()
+
+    def test_log_trash_requires_confirmation_and_does_not_touch_caches(self):
+        window = TranslatorQtWindow()
+        try:
+            window._clear_log()
+            window._append_log("Строка, которую нельзя удалить случайно", "white")
+            cache_std = window.cache_std
+            cache_ai = window.cache_ai
+
+            with mock.patch.object(
+                QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.No,
+            ):
+                window._confirm_clear_log()
+            self.assertEqual(len(window._log_entries), 1)
+
+            with mock.patch.object(
+                QMessageBox,
+                "question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ):
+                window._confirm_clear_log()
+            self.assertEqual(window._log_entries, [])
+            self.assertIs(window.cache_std, cache_std)
+            self.assertIs(window.cache_ai, cache_ai)
+        finally:
+            window.close()
+
+    def test_full_lines_restores_complete_translation_after_compact_preview(self):
+        window = TranslatorQtWindow()
+        try:
+            window.resize(1240, 760)
+            window.show()
+            self.app.processEvents()
+            source = "Very long source text " * 30
+            target = "Очень длинный полный перевод " * 30
+            entry = entry_from_message(
+                "dim",
+                f" > {source} -> {target}",
+                "#64748B",
+            )
+
+            window.log_full_lines.setChecked(False)
+            compact = "".join(
+                segment.text for segment in window._display_segments_for_entry(entry)
+            )
+            self.assertIn("…", compact)
+
+            window.log_full_lines.setChecked(True)
+            full = "".join(
+                segment.text for segment in window._display_segments_for_entry(entry)
+            )
+            self.assertEqual(full, entry.plain_text)
+            self.assertNotIn("…", full)
+        finally:
+            window.close()
+
+    def test_full_lines_restores_complete_issue_message(self):
+        window = TranslatorQtWindow()
+        try:
+            window.resize(1240, 760)
+            window.show()
+            self.app.processEvents()
+            message = "❌ Отклонён полный исходный текст: " + ("diagnostic " * 100)
+            entry = entry_from_message("red", message, "#F87171")
+
+            window.log_full_lines.setChecked(False)
+            compact = "".join(
+                segment.text for segment in window._display_segments_for_entry(entry)
+            )
+            self.assertIn("…", compact)
+
+            window.log_full_lines.setChecked(True)
+            full = "".join(
+                segment.text for segment in window._display_segments_for_entry(entry)
+            )
+            self.assertEqual(full, message)
         finally:
             window.close()
 
