@@ -1,4 +1,4 @@
-﻿import os
+import os
 import re
 import shutil
 
@@ -10,6 +10,13 @@ from mineai.language_validation import uses_same_latin_script
 from mineai.processors.selection import skip_threshold_reached
 from mineai.processors.quest_groups import collect_quest_groups
 from mineai.processors.snbt_extract import apply_snbt_translations, merge_snbt_target
+from mineai.processors.snbt_chapter_lang import (
+    is_chapter_or_reward_snbt,
+    extract_chapter_lang_entries,
+    load_lang_snbt,
+    dump_lang_snbt,
+    merge_and_write_lang_snbt,
+)
 from mineai.processors.translation_state import collect_snbt_selection_with_baseline
 from mineai.runtime.state import JobState
 
@@ -50,8 +57,173 @@ class SnbtProcessor:
         self.service = service
         self.state = state
         self.callbacks = callbacks
+        # Accumulated lang entries from chapter/reward_table files.
+        # Keys are "<HEXID>.<field_suffix>", values are str or list[str].
+        self._accumulated_lang: dict[str, str | list[str]] = {}
 
     def process(
+        self,
+        file_path: str,
+        *,
+        target_lang: dict,
+        mode: str,
+        selected_items: frozenset[str] | None = None,
+    ) -> str | None:
+        if is_chapter_or_reward_snbt(file_path):
+            return self._process_chapter_to_lang(
+                file_path,
+                target_lang=target_lang,
+                mode=mode,
+            )
+        return self._process_lang_catalog(
+            file_path,
+            target_lang=target_lang,
+            mode=mode,
+            selected_items=selected_items,
+        )
+
+    # ------------------------------------------------------------------
+    # Chapter / reward_table → lang accumulation
+    # ------------------------------------------------------------------
+
+    def _process_chapter_to_lang(
+        self,
+        file_path: str,
+        *,
+        target_lang: dict,
+        mode: str,
+    ) -> None:
+        """Extract translatable text from a chapter SNBT and queue it for
+        later writing into lang/<target_code>.snbt.
+
+        The chapter file itself is never modified.
+        """
+        try:
+            with open(file_path, encoding="utf-8") as fh:
+                content = fh.read()
+        except OSError:
+            return None
+
+        entries = extract_chapter_lang_entries(content, file_path)
+        if not entries:
+            return None
+
+        target_regex = target_lang.get("regex", "")
+        # Determine which entries still need translation
+        pending: dict[str, str | list[str]] = {}
+        for key, value in entries.items():
+            if key in self._accumulated_lang:
+                continue
+            if mode == "force":
+                pending[key] = value
+                continue
+            # Check if this key is already translated in accumulated buffer
+            # (will be merged with disk file in flush_accumulated_lang)
+            pending[key] = value
+
+        if not pending:
+            return None
+
+        # Flatten to individual strings for the translation service
+        flat_texts: list[str] = []
+        flat_keys: list[tuple[str, int]] = []  # (lang_key, index_in_list_or_-1)
+        for key, value in pending.items():
+            if isinstance(value, list):
+                for idx, line in enumerate(value):
+                    flat_texts.append(line)
+                    flat_keys.append((key, idx))
+            else:
+                flat_texts.append(value)
+                flat_keys.append((key, -1))
+
+        # Filter by mode (skip entries that are already in target regex)
+        to_translate_indices: list[int] = []
+        for i, text in enumerate(flat_texts):
+            if mode != "force" and target_regex and re.search(target_regex, text):
+                continue
+            to_translate_indices.append(i)
+
+        if not to_translate_indices:
+            # Still accumulate the untranslated originals so they exist in lang
+            for key, value in pending.items():
+                if key not in self._accumulated_lang:
+                    self._accumulated_lang[key] = value
+            return None
+
+        name = os.path.basename(file_path)
+        self.callbacks.on_log(
+            f"⚡ Перевод {name} [Квесты→lang] — {len(to_translate_indices)} строк",
+            "yellow",
+        )
+
+        chunk = {
+            str(i): flat_texts[to_translate_indices[i]]
+            for i in range(len(to_translate_indices))
+        }
+        translated = self.service.translate_dict(
+            chunk,
+            target_lang,
+            self.callbacks,
+            context=name,
+            prompt_type="quests",
+        )
+
+        if not self.state.should_run():
+            return None
+
+        # Map translations back to original flat_texts positions
+        translated_texts = list(flat_texts)
+        for batch_idx, orig_idx in enumerate(to_translate_indices):
+            tx = translated.get(str(batch_idx))
+            if tx:
+                translated_texts[orig_idx] = tx
+
+        # Reconstruct per-key values and accumulate
+        for i, (key, list_idx) in enumerate(flat_keys):
+            tx_value = translated_texts[i]
+            if list_idx == -1:
+                # Single string
+                if key not in self._accumulated_lang:
+                    self._accumulated_lang[key] = tx_value
+            else:
+                # List — build incrementally
+                existing = self._accumulated_lang.get(key)
+                if existing is None:
+                    self._accumulated_lang[key] = [tx_value]
+                elif isinstance(existing, list):
+                    existing.append(tx_value)
+                # (if it became a str somehow, leave it)
+
+        return None
+
+    def flush_accumulated_lang(
+        self,
+        quests_dir: str,
+        target_code: str,
+    ) -> str | None:
+        """Write all accumulated chapter/RT lang entries to lang/<target>.snbt.
+
+        Returns the path to the written file, or None if nothing was written.
+        """
+        if not self._accumulated_lang:
+            return None
+
+        lang_dir = os.path.join(quests_dir, "lang")
+        target_path = os.path.join(lang_dir, f"{target_code}.snbt")
+
+        merge_and_write_lang_snbt(
+            target_path,
+            self._accumulated_lang,
+            overwrite_existing=False,  # keep existing translations
+        )
+        self._accumulated_lang.clear()
+        return target_path
+
+    # ------------------------------------------------------------------
+    # Lang-catalog (en_us.snbt / lang/en_us/*.snbt) — unchanged logic
+    # ------------------------------------------------------------------
+
+    def _process_lang_catalog(
         self,
         file_path: str,
         *,

@@ -1,4 +1,4 @@
-﻿# Журнал изменений MineAI Modpack Translator
+# Журнал изменений MineAI Modpack Translator
 
 Этот файл описывает наши локальные изменения поверх исходной beta-ветки
 MineAI Modpack Translator. Исходной точкой была версия `10.0.0 - BETAv16`.
@@ -36,6 +36,58 @@ MineAI Modpack Translator. Исходной точкой была версия `
 | BETAv38 | 13.08.2026 | Датапак каждого мира и стабильные DescriptionId Modonomicon |
 | BETAv39 | 15.08.2026 | Полный журнал и автоматический выбор загруженных моделей LM Studio |
 | BETAv40 | 15.08.2026 | Связанные словари FTB Quests и полное покрытие квестов ATM9 |
+| BETAv41 | 16.08.2026 | Вынос текста FTB Quests chapter/RT в lang/ru_ru.snbt без перезаписи исходников |
+
+---
+
+## 10.0.0 — BETAv41
+
+Дата сборки: 16.08.2026.
+
+### Проблема
+
+В режиме «Дополнить» FTB Quests translator **перезаписывал** файлы глав
+(`chapters/*.snbt`, `reward_tables/*.snbt`) вместо того, чтобы добавлять
+переводы в resource pack. Это приводило к тому что при каждом запуске
+исходные файлы модпака изменялись — нарушая целостность сборки.
+
+### Что исправили
+
+- **Новый модуль `mineai/processors/snbt_chapter_lang.py`** — извлекает
+  переводимые строки из глав и reward table SNBT-файлов и накапливает их по
+  формату `"<HEX_ID>.<field>": "value"`. Исходные файлы глав **не изменяются**.
+- **`SnbtProcessor`** разделён на два режима:
+  - `_process_chapter_to_lang()` — для глав и reward tables: переводит текст и
+    накапливает результаты в памяти.
+  - `_process_lang_catalog()` — для `lang/en_us.snbt`, `lang/en_us/*.snbt`:
+    прежняя логика записи в отдельный lang-файл без изменений.
+- **`flush_accumulated_lang()`** — новый метод `SnbtProcessor`, вызываемый в
+  `job.py` после обработки всех SNBT-файлов. Атомарно записывает
+  `config/ftbquests/quests/lang/<target>.snbt`, объединяя с уже существующими
+  переводами (существующие значения имеют приоритет, новые ключи добавляются).
+- **FTB Quests TranslationManager** автоматически подхватывает
+  `lang/ru_ru.snbt` и перекрывает прямой текст глав — chapter файлы менять
+  не нужно.
+- **Оценщик (`estimator.py`)** для chapter/RT файлов считает извлекаемые
+  lang-записи, а не in-place строки.
+- Универсальная поддержка: фикс работает для **всех сборок** с FTB Quests,
+  не только ATM9.
+
+### Затронутые файлы
+
+| Файл | Изменение |
+|---|---|
+| `mineai/processors/snbt_chapter_lang.py` | **[NEW]** Извлечение и I/O lang SNBT |
+| `mineai/processors/snbt.py` | Разделение на chapter vs lang-catalog режимы |
+| `mineai/runtime/job.py` | Вызов `flush_accumulated_lang()`, `import os` |
+| `mineai/processors/estimator.py` | Ветка оценки для chapter SNBT |
+| `tests/test_snbt_chapter_lang.py` | **[NEW]** 23 unit-теста нового модуля |
+
+### Проверка
+
+- `python -m pytest tests/ -q` → **471 passed** (было 448 до Beta41).
+- Запуск на любой сборке с FTB Quests: chapter/*.snbt не изменяются,
+  `config/ftbquests/quests/lang/ru_ru.snbt` создаётся с переведёнными строками.
 
 ---
 

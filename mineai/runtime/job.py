@@ -1,4 +1,5 @@
-﻿import threading
+import os
+import threading
 import time
 import traceback
 from dataclasses import dataclass
@@ -519,6 +520,27 @@ class TranslationJob:
                         selected_items=options.selected_items,
                     ),
                 )
+
+            # Flush chapter/reward_table lang entries into lang/<target>.snbt
+            if self.state.should_run():
+                quests_dir = os.path.join(
+                    options.mc_dir, "config", "ftbquests", "quests"
+                )
+                try:
+                    lang_snbt_path = snbt_proc.flush_accumulated_lang(
+                        quests_dir, lang["file"]
+                    )
+                    if lang_snbt_path and lang_snbt_path not in modified_paths:
+                        callbacks.on_log(
+                            f"\U0001f4dd \u0418\u0437\u043c\u0435\u043d\u0451\u043d \u0444\u0430\u0439\u043b {lang_snbt_path}",
+                            "green",
+                        )
+                        modified_paths.append(lang_snbt_path)
+                except Exception:
+                    self.on_log(
+                        f"\n\u274c \u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u043f\u0438\u0441\u0438 lang SNBT:\n{traceback.format_exc()}",
+                        "red",
+                    )
 
             for path in bq_files:
                 if not self.state.should_run():

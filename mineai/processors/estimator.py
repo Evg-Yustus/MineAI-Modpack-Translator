@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import re
 import zipfile
@@ -30,6 +30,10 @@ from mineai.processors.quest_locales import QuestLocalePlan
 from mineai.processors.snbt import (
     get_snbt_target_path,
     should_ignore_snbt_source,
+)
+from mineai.processors.snbt_chapter_lang import (
+    is_chapter_or_reward_snbt,
+    extract_chapter_lang_entries,
 )
 from mineai.processors.snbt_extract import merge_snbt_target
 from mineai.processors.translation_state import (
@@ -671,6 +675,22 @@ class StringEstimator:
     ) -> int:
         if should_ignore_snbt_source(path):
             return 0
+
+        # Chapter / reward_table SNBT: count extractable lang entries
+        if is_chapter_or_reward_snbt(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    content = fh.read()
+            except OSError:
+                return 0
+            entries = extract_chapter_lang_entries(content, path)
+            if not entries:
+                return 0
+            if mode == "skip":
+                if skip_threshold_reached(len(entries), len(entries)):
+                    return 0
+            return len(entries)
+
 
         target_path = get_snbt_target_path(path, target_code)
         separate_target = target_path != path
