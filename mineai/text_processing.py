@@ -305,12 +305,32 @@ def mask_protected_fragments(text: str) -> tuple[str, dict[str, str]]:
 
 def structural_fragments(text: str) -> tuple[str, ...]:
     """Return ordered game/markup codes that translation must not move or invent."""
-    return tuple(match.group(0) for match in STRUCTURAL_FRAGMENT_PATTERN.finditer(text))
+    structure_only = JSON_TEXT_VALUE_PATTERN.sub(
+        lambda match: (
+            match.group("prefix")
+            + "\ue200TEXT\ue201"
+            + match.group("suffix")
+        ),
+        text,
+    )
+    return tuple(
+        match.group(0)
+        for match in STRUCTURAL_FRAGMENT_PATTERN.finditer(structure_only)
+    )
 
 
 def numeric_fragments(text: str) -> tuple[str, ...]:
     """Return exact numeric fragments in source order for hallucination checks."""
-    return tuple(match.group(0) for match in NUMERIC_FRAGMENT_PATTERN.finditer(text))
+    without_minecraft_codes = re.sub(
+        r"[&§][0-9a-fk-orlmn]",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return tuple(
+        match.group(0)
+        for match in NUMERIC_FRAGMENT_PATTERN.finditer(without_minecraft_codes)
+    )
 
 
 def translation_length_issue(source: str, candidate: str) -> str | None:
@@ -404,6 +424,9 @@ def is_technical_term(text: str) -> bool:
     if re.fullmatch(r"\d+(?:[.,]\d+)?x", stripped, re.IGNORECASE):
         return True
 
+    if re.fullmatch(r"[A-Z][a-z]?\s*\(\d{1,3}\)", stripped):
+        return True
+
     if re.fullmatch(
         r"(?:⟦FK\d{4}⟧)?[A-Z][a-z]{3,} [a-z]{4,}\]",
         stripped,
@@ -492,7 +515,10 @@ def is_article_removed_technical_translation(
 
 
 def is_translation_key(text: str) -> bool:
-    return bool(re.match(r"^[a-zA-Z0-9_-]+[.:][a-zA-Z0-9_.-]+$", text.strip()))
+    candidate = text.strip()
+    if candidate.startswith("{") and candidate.endswith("}"):
+        candidate = candidate[1:-1].strip()
+    return bool(re.fullmatch(r"[a-zA-Z0-9_-]+[.:][a-zA-Z0-9_.-]+", candidate))
 
 
 def looks_like_source_language(text: str) -> bool:

@@ -8,13 +8,14 @@ from mineai.io_utils import atomic_write_text
 from mineai.language_validation import has_long_untranslated_english_fragment
 from mineai.text_processing import (
     is_technical_term,
+    is_translation_key,
     polish_translation,
     translation_length_issue,
 )
 
 _IDENTITY_PREFIX = "__mineai_identity__:"
 _CACHE_VERSION_KEY = "__mineai_ai_cache_validation_version__"
-_CACHE_VALIDATION_VERSION = "30"
+_CACHE_VALIDATION_VERSION = "31"
 _LANGUAGE_BY_API = {item["api"]: item for item in LANGUAGES.values()}
 
 
@@ -103,6 +104,13 @@ class TranslationCache:
                 if key == _CACHE_VERSION_KEY:
                     continue
                 if key.startswith(_IDENTITY_PREFIX):
+                    identity_payload = key[len(_IDENTITY_PREFIX):]
+                    _api_code, separator, source = identity_payload.partition("_")
+                    source_payload = source.rsplit("␟", 1)[-1]
+                    if separator and is_translation_key(source_payload):
+                        self._backup_before_auto_repair()
+                        del self._data[key]
+                        changes += 1
                     continue
                 api_code, sep, source = key.partition("_")
                 if not sep:

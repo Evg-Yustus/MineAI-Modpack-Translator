@@ -219,7 +219,7 @@ def _validate_candidate(
         return False, length_issue, False
     if has_untranslated_leading_article(item.original, candidate, target_lang):
         return False, "оставлен английский артикль в начале строки", False
-    if has_long_untranslated_english_fragment(candidate, target_lang):
+    if has_long_untranslated_english_fragment(_candidate_masked, target_lang):
         return False, "оставлен длинный английский фрагмент", False
     same_as_source = candidate.strip() == item.original.strip()
     if same_as_source:

@@ -89,7 +89,7 @@ class AtomicWriteTests(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(
                     json.load(handle)["__mineai_ai_cache_validation_version__"],
-                    "30",
+                    "31",
                 )
 
     def test_failed_replace_preserves_original_and_removes_temp_file(self):

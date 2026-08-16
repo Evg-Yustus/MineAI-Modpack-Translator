@@ -26,6 +26,7 @@ from mineai.processors.selection import (
 )
 from mineai.processors.loose_paths import loose_target_disk_path
 from mineai.processors.quest_groups import collect_quest_groups
+from mineai.processors.quest_locales import QuestLocalePlan
 from mineai.processors.snbt import (
     get_snbt_target_path,
     should_ignore_snbt_source,
@@ -59,6 +60,7 @@ class StringEstimator:
         selected_items: frozenset[str] | None = None,
         heracles_files: list[str] | None = None,
         book_locator: MarkdownBookLocator | None = None,
+        quest_locale_plan: QuestLocalePlan | None = None,
     ) -> int:
         total = 0
         target_file = f"{target_lang['file']}.json"
@@ -105,6 +107,28 @@ class StringEstimator:
             )
 
         if translate_quests:
+            for dependency in (
+                quest_locale_plan.dependencies if quest_locale_plan else ()
+            ):
+                if not target_is_selected(
+                    selected_items,
+                    dependency.source_path,
+                    "quests",
+                ):
+                    continue
+                pending = collect_lang_keys_to_translate(
+                    dependency.source_entries,
+                    dependency.existing_entries,
+                    mode,
+                    target_regex,
+                )
+                if mode == "skip" and skip_threshold_reached(
+                    len(dependency.source_entries),
+                    len(pending),
+                ):
+                    continue
+                total += len(pending)
+
             for path in snbt_files:
                 if not self.state.should_run():
                     return total

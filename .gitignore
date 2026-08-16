@@ -4,6 +4,8 @@ dist/
 *.spec
 !MineAI_Translator_Beta36.spec
 !MineAI_Translator_Beta39.spec
+log_test/
+docs/
 
 # Кэш Python
 __pycache__/

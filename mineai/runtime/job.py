@@ -27,6 +27,10 @@ from mineai.processors.book_paths import MarkdownBookLocator
 from mineai.processors.bq_json import BQProcessor
 from mineai.processors.heracles import HeraclesProcessor
 from mineai.processors.loose_json import LooseJsonProcessor
+from mineai.processors.quest_locales import (
+    QuestLocaleProcessor,
+    build_quest_locale_plan,
+)
 from mineai.processors.snbt import SnbtProcessor
 from mineai.runtime.ai_launcher import AiLauncher
 from mineai.runtime.state import JobState
@@ -284,12 +288,38 @@ class TranslationJob:
                 if target_is_selected(options.selected_items, path, "quests")
             ]
 
+        quest_locale_plan = build_quest_locale_plan(
+            options.mc_dir,
+            snbt,
+            lang["file"],
+            options.selected_items,
+        ) if options.translate_quests else None
+        quest_locale_dependencies = [
+            dependency
+            for dependency in (
+                quest_locale_plan.dependencies if quest_locale_plan else ()
+            )
+            if target_is_selected(
+                options.selected_items,
+                dependency.source_path,
+                "quests",
+            )
+        ]
+        if quest_locale_plan and quest_locale_plan.missing_keys:
+            preview = ", ".join(sorted(quest_locale_plan.missing_keys)[:10])
+            self.on_log(
+                "⚠️ Не найдены исходные тексты для ключей квестов: "
+                f"{len(quest_locale_plan.missing_keys)} ({preview})",
+                "yellow",
+            )
+
         if (
             not jars
             and not loose
             and not snbt
             and not bq_files
             and not heracles_files
+            and not quest_locale_dependencies
         ):
             self.on_log("❌ Нечего переводить!", "red")
             return
@@ -310,6 +340,7 @@ class TranslationJob:
             selected_items=options.selected_items,
             heracles_files=heracles_files,
             book_locator=shared_book_locator,
+            quest_locale_plan=quest_locale_plan,
         )
         self.state.set_total_strings(estimated_count)
         self.on_log(f"   Найдено: {estimated_count}", "cyan")
@@ -341,6 +372,7 @@ class TranslationJob:
             + len(snbt)
             + len(bq_files)
             + len(heracles_files)
+            + len(quest_locale_dependencies)
         )
         done = 0
 
@@ -365,7 +397,7 @@ class TranslationJob:
                 )
 
         try:
-            if options.output_mode == "resourcepack":
+            if options.output_mode == "resourcepack" or quest_locale_dependencies:
                 pack_writer = PackWriter(
                     options.mc_dir,
                     options.pack_name,
@@ -391,6 +423,11 @@ class TranslationJob:
             callbacks = self._callbacks()
             jar_proc = JarProcessor(service, self.state, callbacks)
             loose_proc = LooseJsonProcessor(service, self.state, callbacks)
+            quest_locale_proc = QuestLocaleProcessor(
+                service,
+                self.state,
+                callbacks,
+            )
             snbt_proc = SnbtProcessor(service, self.state, callbacks)
             bq_proc = BQProcessor(service, self.state, callbacks)
             heracles_proc = HeraclesProcessor(service, self.state, callbacks)
@@ -445,6 +482,23 @@ class TranslationJob:
                         target_lang=lang,
                         mode=process_mode,
                         output_mode=options.output_mode,
+                        pack_writer=pack_writer,
+                    ),
+                )
+
+            for dependency in quest_locale_dependencies:
+                if not self.state.should_run():
+                    break
+                self.state.wait_if_paused()
+                if not self.state.should_run():
+                    break
+                process_file(
+                    dependency.source_path,
+                    "Словари квестов",
+                    lambda dependency=dependency: quest_locale_proc.process(
+                        dependency,
+                        target_lang=lang,
+                        mode=process_mode,
                         pack_writer=pack_writer,
                     ),
                 )

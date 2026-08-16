@@ -1,6 +1,6 @@
 ﻿# 🌍 MineAI Translator (The Ultimate Modpack Localizer)
 
-[![Beta39](https://img.shields.io/badge/version-10.0.0--BETAv39-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
+[![Beta40](https://img.shields.io/badge/version-10.0.0--BETAv40-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
 [![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License review](https://img.shields.io/badge/FormatKit_license-review_required-orange.svg)](#license)
@@ -27,7 +27,7 @@ The program features a modern Graphical User Interface (GUI). You don't need to 
 You don't need to install Python or mess with code! You can download the ready-to-use application.
 
 1. Go to the [Releases](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases) tab on the right.
-2. Download the latest **`MineAI_Translator_Beta39.exe`** file.
+2. Download the latest **`MineAI_Translator_Beta40.exe`** file.
 3. Place it in a convenient folder and run it with a double click.
 
 *(For advanced users and developers, instructions on running from source code are at the bottom of the page).*
@@ -161,11 +161,16 @@ mineai/
 If you modified the code and want to build your own executable without a console window, simply run the provided batch file:
 `build.bat`
 
-The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta39.exe`.
+The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta40.exe`.
 
 ### FormatKit SDK
 
-Beta39 keeps the proven semantic-unit pipeline from Beta38 and adds a
+Beta40 keeps the proven semantic-unit pipeline from Beta39 and adds a
+quest-localization dependency resolver. FTB Quest references such as
+`{atm9.quest.example}` are resolved to their real KubeJS, resource-pack, or mod
+locale entries. Only referenced values are translated and written to the
+generated resource pack; source quest files and English KubeJS dictionaries
+remain unchanged. Beta40 also keeps the
 timestamped session journal, lossless full-line display, confirmation before
 clearing the visible journal, and automatic discovery of loaded LM Studio LLMs.
 The embedded architecture combines the
@@ -254,11 +259,15 @@ API-токен нужен только тогда, когда авторизац
 
 Для сборки собственного `.exe` файла без окна консоли используйте готовый батник:
 `build.bat`
-(Результат появится в папке `dist/MineAI_Translator_Beta39.exe`).
+(Результат появится в папке `dist/MineAI_Translator_Beta40.exe`).
 
 ### SDK FormatKit
 
-Beta39 сохраняет объединённую архитектуру Beta38 и добавляет журнал сеансов с
+Beta40 сохраняет объединённую архитектуру Beta39 и добавляет резолвер связанных
+словарей квестов. Ссылки FTB Quests вида `{atm9.quest.example}` находятся в
+реальных словарях KubeJS, ресурс-паков или модов; переводятся только используемые
+значения, а результат сохраняется в создаваемом ресурспаке без изменения
+английских файлов сборки. Также сохранён журнал сеансов с
 временем, настоящее отображение полных строк, подтверждение очистки журнала и
 автоматический выбор загруженных моделей LM Studio. Проект
 объединяет смысловые блоки с отдельным SDK

@@ -14,9 +14,11 @@ from mineai.json_utils import load_lenient_json
 from mineai.language_validation import uses_same_latin_script
 from mineai.mod_names import get_mod_name
 from mineai.processors.discovery import (
+    discover_bq_files,
     discover_heracles_files,
     discover_jar_files,
     discover_loose_lang_files,
+    discover_snbt_files,
 )
 from mineai.processors.book_paths import (
     MarkdownBookLocator,
@@ -33,6 +35,7 @@ from mineai.processors.selection import (
     collect_book_json_selection,
 )
 from mineai.processors.quest_groups import collect_quest_groups
+from mineai.processors.quest_locales import build_quest_locale_plan
 from mineai.processors.snbt import get_snbt_target_path
 from mineai.processors.snbt_extract import merge_snbt_target
 from mineai.processors.translation_state import collect_snbt_selection_with_baseline
@@ -103,8 +106,6 @@ class ModpackAnalyzer:
     ) -> tuple[int, int]:
         target_file = f"{target_lang['file']}.json"
         target_regex = target_lang["regex"]
-        quests_dir = os.path.join(mc_dir, "config", "ftbquests", "quests")
-
         total_en = 0
         total_tr = 0
         jars = (
@@ -176,37 +177,49 @@ class ModpackAnalyzer:
             total_en += en
             total_tr += tr
 
-        snbt_files: list[str] = []
-        if os.path.isdir(quests_dir) and translate_quests:
-            for root, _, files in os.walk(quests_dir):
-                # Отсекаем папки других локализаций (es_es, pt_br и т.д.)
-                parts = root.lower().split(os.sep)
-                if "lang" in parts:
-                    lang_idx = parts.index("lang")
-                    if len(parts) > lang_idx + 1 and parts[lang_idx + 1] != "en_us":
-                        continue
+        snbt_files = discover_snbt_files(mc_dir) if translate_quests else []
+        bq_files = discover_bq_files(mc_dir) if translate_quests else []
 
-                for name in files:
-                    if name.endswith(".snbt"):
-                        nl = name.lower()
-                        # Отсекаем файлы других локализаций в корне (ru_ru, es_es и т.д.)
-                        if re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", nl) and nl != "en_us.snbt":
-                            continue
-                        
-                        # Отсекаем огромный резервный en_us.snbt, если рядом есть папка en_us
-                        if nl == "en_us.snbt" and os.path.isdir(os.path.join(root, "en_us")):
-                            continue
-
-                        snbt_files.append(os.path.join(root, name))
-        
-        # ПОИСК BQ
-        bq_dir = os.path.join(mc_dir, "config", "betterquesting", "DefaultQuests")
-        bq_files: list[str] = []
-        if os.path.isdir(bq_dir) and translate_quests:
-            for root, _, files in os.walk(bq_dir):
-                for name in files:
-                    if name.endswith(".json") and ("QuestLines" in root or "Quests" in root):
-                        bq_files.append(os.path.join(root, name))
+        quest_locale_plan = build_quest_locale_plan(
+            mc_dir,
+            snbt_files,
+            target_lang["file"],
+        ) if translate_quests else None
+        if quest_locale_plan is not None:
+            for dependency in quest_locale_plan.dependencies:
+                pending = collect_lang_keys_to_translate(
+                    dependency.source_entries,
+                    dependency.existing_entries,
+                    "append",
+                    target_regex,
+                )
+                total = count_translatable_lang_entries(
+                    dependency.source_entries
+                )
+                translated = max(0, total - len(pending))
+                if not total:
+                    continue
+                self._emit_result(
+                    on_row,
+                    on_item,
+                    path=dependency.source_path,
+                    scope="quests",
+                    icon="📜",
+                    name=os.path.relpath(dependency.source_path, mc_dir),
+                    kind="Квесты · словарь локализации",
+                    translated=translated,
+                    total=total,
+                    percent=int(translated / total * 100),
+                )
+                total_en += total
+                total_tr += translated
+            if quest_locale_plan.missing_keys:
+                preview = ", ".join(sorted(quest_locale_plan.missing_keys)[:10])
+                on_log(
+                    "⚠️ Не найдены исходные тексты для ключей квестов: "
+                    f"{len(quest_locale_plan.missing_keys)} ({preview})",
+                    "yellow",
+                )
                         
         for index, path in enumerate(snbt_files):
             if not self.state.should_run():
