@@ -30,6 +30,16 @@ IGNORE_TERMS = [
     "ticks", "GUI", "UI", "HUD", "JEI", "REI", "EMI", "API", "JSON", "NBT", "FPS", "TPS",
     "HP", "XP", "MP", "XP/t", "XYZ", "RGB", "ID", "II", "III", "IV", "VI", "VII", "VIII",
     "IX", "XI", "XII",
+    # --- H2: Mod names that must not be translated ---
+    # Multi-word mod names (checked first due to sort-by-len)
+    "Applied Energistics", "Industrial Foregoing", "Silent Gear", "Twilight Forest",
+    "Refined Storage", "Blood Magic", "Thermal Expansion", "Thermal Foundation",
+    "Thermal Dynamics", "Tinkers Construct", "Natura Mystica", "Deep Dark Regalia",
+    "Mekanism Generators", "Mekanism Tools",
+    # Single-word mod names
+    "Apotheosis", "Allthemodium", "Botania", "Mekanism", "Powah", "Create",
+    "Mystical", "Hexerei", "Malum", "Occultism", "Pneumaticraft", "Paxel",
+    "Warden", "Allay", "Sniffer",
 ]
 IGNORE_TERMS.sort(key=len, reverse=True)
 

@@ -246,6 +246,13 @@ class SnbtProcessor:
         )
         separate_target = target_file_path != file_path
 
+        if separate_target and filename == "en_us.snbt":
+            self.callbacks.on_log(
+                f"📖 Обработка {filename} [lang/] → {os.path.basename(target_file_path)} "
+                f"(режим: {mode})",
+                "cyan",
+            )
+
         if separate_target:
             os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
             original_path = file_path

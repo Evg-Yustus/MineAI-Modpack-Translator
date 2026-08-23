@@ -27,6 +27,7 @@ class ConfigManager:
             "ai_provider": "local",
             "ai_retries": "3",
             "fallback_google": "False",
+            "ai_batch": "20",
         },
         "API": {
             "deepl_key": "",

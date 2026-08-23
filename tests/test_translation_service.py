@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import tempfile
 import unittest
@@ -418,7 +418,7 @@ class TranslationServiceRegressionTests(unittest.TestCase):
         )
 
     def test_formatted_validation_does_not_join_text_across_anchors(self):
-        source = "The value is zero.$(p)Apotheosis changes the default."
+        source = "The value is zero.$(p)This addon changes the default."
 
         def translate(items):
             return {
@@ -426,8 +426,8 @@ class TranslationServiceRegressionTests(unittest.TestCase):
                     "The value is zero.",
                     "Значение равно нулю.",
                 ).replace(
-                    "Apotheosis changes the default.",
-                    "Apotheosis изменяет значение по умолчанию.",
+                    "This addon changes the default.",
+                    "Этот аддон изменяет значение по умолчанию.",
                 )
                 for item in items.values()
             }
@@ -446,7 +446,7 @@ class TranslationServiceRegressionTests(unittest.TestCase):
 
         self.assertEqual(
             result["page"],
-            "Значение равно нулю.$(p)Apotheosis изменяет значение по умолчанию.",
+            "Значение равно нулю.$(p)Этот аддон изменяет значение по умолчанию.",
         )
 
     def test_failed_long_formatted_node_is_retried_in_smaller_segments(self):

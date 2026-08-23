@@ -400,8 +400,9 @@ class TranslatorQtWindow(QMainWindow):
         ai_grid.addWidget(HelpMarker(t("tooltip.ai_batch")), 1, 1)
         self.ai_batch_spin = ScrollSafeSpinBox()
         self.ai_batch_spin.setRange(1, 40)
-        self.ai_batch_spin.setValue(20)
+        self.ai_batch_spin.setValue(settings.getint("AI", "ai_batch", 20))
         self.ai_batch_spin.valueChanged.connect(self._refresh_footer)
+        self.ai_batch_spin.valueChanged.connect(lambda v: settings.set("AI", "ai_batch", v))
         ai_grid.addWidget(self.ai_batch_spin, 1, 2)
 
         fallback_host = QWidget()

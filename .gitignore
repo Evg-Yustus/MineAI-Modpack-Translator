@@ -6,6 +6,8 @@ dist/
 !MineAI_Translator_Beta39.spec
 log_test/
 docs/
+graphify-out/
+Claude_Free.bat
 
 # Кэш Python
 __pycache__/

@@ -304,6 +304,60 @@ class Beta40QuestLocalizationTests(unittest.TestCase):
             {"example.quest.archive_title": "Archive Quest"},
         )
 
+    def test_missing_en_us_key_uses_consensus_from_other_locales(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            chapters = root / "config" / "ftbquests" / "quests" / "chapters"
+            chapters.mkdir(parents=True)
+            quest_file = chapters / "mystical_ag.snbt"
+            quest_file.write_text(
+                '{description: ["{atm9.quest.ma.desc.atm}"]}',
+                encoding="utf-8-sig",
+            )
+            lang_dir = root / "kubejs" / "assets" / "kubejs" / "lang"
+            lang_dir.mkdir(parents=True)
+            (lang_dir / "en_us.json").write_text("{}", encoding="utf-8-sig")
+            for locale in ("de_de", "it_it", "nb_no"):
+                (lang_dir / f"{locale}.json").write_text(
+                    json.dumps(
+                        {
+                            "atm9.quest.ma.desc.atm": (
+                                "Requires a Crux (Next Quest)"
+                            )
+                        }
+                    ),
+                    encoding="utf-8-sig",
+                )
+            (lang_dir / "es_es.json").write_text(
+                json.dumps(
+                    {
+                        "atm9.quest.ma.desc.atm": (
+                            "Requiere un Crux (Próxima misión)"
+                        )
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8-sig",
+            )
+
+            plan = build_quest_locale_plan(
+                str(root),
+                [str(quest_file)],
+                "ru_ru",
+            )
+
+        self.assertEqual(plan.missing_keys, frozenset())
+        self.assertEqual(plan.resolved_keys, {"atm9.quest.ma.desc.atm"})
+        self.assertEqual(len(plan.dependencies), 1)
+        self.assertEqual(
+            plan.dependencies[0].target_path,
+            "assets/kubejs/lang/ru_ru.json",
+        )
+        self.assertEqual(
+            plan.dependencies[0].source_entries,
+            {"atm9.quest.ma.desc.atm": "Requires a Crux (Next Quest)"},
+        )
+
     def test_estimator_counts_referenced_dictionary_in_quest_only_mode(self) -> None:
         self.assertIn(
             "quest_locale_plan",

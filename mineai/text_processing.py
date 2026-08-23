@@ -145,7 +145,9 @@ def load_dictionary() -> dict[str, str]:
         return default
     try:
         with open(DICT_FILE, encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f)
+        # Filter comment/metadata keys (starting with "_")
+        return {k: v for k, v in raw.items() if not k.startswith("_")}
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -403,6 +405,15 @@ def unmask_translation(text: str, mapping: dict[str, str]) -> str:
             )
         if text == previous:
             break
+    # Remove spurious space that AI inserts between a Minecraft format code and
+    # the following word: e.g. "&a Глава" -> "&aГлава".
+    # Format codes are [&§][0-9a-fk-orlmn]; a space immediately after is never
+    # valid in Minecraft text, so stripping it is always safe.
+    text = re.sub(
+        r"([&§][0-9a-fk-orlmnA-FK-ORLMN]) (?=\S)",
+        r"\1",
+        text,
+    )
     return text
 
 

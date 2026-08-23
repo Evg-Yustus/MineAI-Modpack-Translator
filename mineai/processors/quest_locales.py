@@ -6,6 +6,7 @@ import json
 import os
 import re
 import zipfile
+from collections import Counter
 from dataclasses import dataclass
 
 from mineai.analysis_items import selected_segments_for_target, target_is_selected
@@ -162,7 +163,8 @@ def build_quest_locale_plan(
     resolved: set[str] = set()
     dependencies: list[QuestLocaleDependency] = []
 
-    for source_path in discover_loose_lang_files(mc_dir):
+    loose_sources = discover_loose_lang_files(mc_dir)
+    for source_path in loose_sources:
         if not unresolved or not source_path.casefold().endswith(".json"):
             continue
         target_path = loose_pack_target_path(source_path, mc_dir, target_code)
@@ -202,6 +204,45 @@ def build_quest_locale_plan(
                 source_entries=matched,
                 existing_entries=existing,
             )
+        )
+        claimed = set(matched)
+        resolved.update(claimed)
+        unresolved.difference_update(claimed)
+
+    for source_path in loose_sources:
+        if not unresolved or os.path.basename(source_path).casefold() != "en_us.json":
+            continue
+        matched = _consensus_entries_from_sibling_locales(
+            source_path,
+            unresolved,
+            target_code,
+        )
+        if not matched:
+            continue
+        target_path = loose_pack_target_path(source_path, mc_dir, target_code)
+        if not target_path:
+            continue
+        target_disk = loose_target_disk_path(source_path, target_code)
+        existing: dict[str, str] = {}
+        if os.path.isfile(target_disk):
+            try:
+                with open(target_disk, "rb") as target_handle:
+                    target_data = load_lenient_json(target_handle.read())
+                existing = {
+                    key: value
+                    for key, value in target_data.items()
+                    if key in matched and isinstance(value, str)
+                }
+            except (OSError, ValueError):
+                existing = {}
+        _merge_dependency(
+            dependencies,
+            QuestLocaleDependency(
+                source_path=source_path,
+                target_path=target_path,
+                source_entries=matched,
+                existing_entries=existing,
+            ),
         )
         claimed = set(matched)
         resolved.update(claimed)
@@ -298,3 +339,63 @@ def _quest_locale_archives(mc_dir: str) -> list[str]:
             if name.casefold().endswith(extensions)
         )
     return result
+
+
+def _consensus_entries_from_sibling_locales(
+    source_path: str,
+    unresolved: set[str],
+    target_code: str,
+) -> dict[str, str]:
+    """Recover omissions in en_us only when other locale files agree."""
+    candidates: dict[str, list[str]] = {key: [] for key in unresolved}
+    directory = os.path.dirname(source_path)
+    try:
+        names = sorted(os.listdir(directory), key=str.casefold)
+    except OSError:
+        return {}
+    for name in names:
+        folded = name.casefold()
+        if (
+            not re.fullmatch(r"[a-z]{2}_[a-z]{2}\.json", folded)
+            or folded in {"en_us.json", f"{target_code.casefold()}.json"}
+        ):
+            continue
+        try:
+            with open(os.path.join(directory, name), "rb") as locale_handle:
+                locale_data = load_lenient_json(locale_handle.read())
+        except (OSError, ValueError):
+            continue
+        for key in unresolved:
+            value = locale_data.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates[key].append(value)
+
+    recovered: dict[str, str] = {}
+    for key, values in candidates.items():
+        if not values:
+            continue
+        value, count = Counter(values).most_common(1)[0]
+        if count >= 2:
+            recovered[key] = value
+    return recovered
+
+
+def _merge_dependency(
+    dependencies: list[QuestLocaleDependency],
+    addition: QuestLocaleDependency,
+) -> None:
+    for index, dependency in enumerate(dependencies):
+        if dependency.target_path.casefold() != addition.target_path.casefold():
+            continue
+        source_entries = dict(dependency.source_entries)
+        source_entries.update(addition.source_entries)
+        existing_entries = dict(dependency.existing_entries)
+        existing_entries.update(addition.existing_entries)
+        dependencies[index] = QuestLocaleDependency(
+            source_path=dependency.source_path,
+            target_path=dependency.target_path,
+            source_entries=source_entries,
+            existing_entries=existing_entries,
+        )
+        return
+    dependencies.append(addition)

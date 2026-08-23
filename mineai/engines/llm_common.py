@@ -24,6 +24,19 @@ from mineai.text_processing import (
 RETRY_BATCH_SIZES = (10, 5, 1)
 
 PROMPTS_FILE = "prompts.json"
+GLOSSARY_FILE = "glossary.json"
+
+
+def load_glossary() -> dict[str, str]:
+    """Load eng->target glossary from glossary.json; skip comment keys (_...)."""
+    if not os.path.exists(GLOSSARY_FILE):
+        return {}
+    try:
+        with open(GLOSSARY_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+        return {k: v for k, v in raw.items() if not k.startswith("_")}
+    except Exception:
+        return {}
 
 _LEGACY_DEFAULT_PROMPTS = {
     "mods": {
@@ -117,6 +130,15 @@ def build_translation_prompt(
             f"naturally into {lang_name}. Preserve only protected placeholders and "
             "genuine non-translatable terms."
         )
+    # --- M1: inject glossary for consistent translations ---
+    glossary = load_glossary()
+    # Only relevant terms (those appearing in the payload)
+    payload_text = " ".join(payload.values()).lower()
+    relevant_glossary = {
+        k: v for k, v in glossary.items()
+        if k.lower() in payload_text or k.lower().rstrip("s") in payload_text
+    }
+
     tech_rules = prompts.get("technical", get_default_prompts()["technical"])
     tech_rules += (
         "\nEach JSON key is an independent source row. Never combine text from "
@@ -132,7 +154,11 @@ def build_translation_prompt(
         tech_rules = re.sub(r'(?i)\n?.*\[#N#\].*', '', tech_rules)
         tech_rules = re.sub(r'(?i)\n?.*markers.*', '', tech_rules)
         tech_rules = tech_rules.replace("{markers}", "")
-        return f"{intro}\n\n{tech_rules.strip()}\n\nDATA:\n{blob}"
+        glossary_block_nm = ""
+        if relevant_glossary:
+            lines_nm = "\n".join(f"  {k} = {v}" for k, v in list(relevant_glossary.items())[:30])
+            glossary_block_nm = f"\nGLOSSARY (use these exact translations for consistency):\n{lines_nm}\n"
+        return f"{intro}\n\n{tech_rules.strip()}{glossary_block_nm}\n\nDATA:\n{blob}"
 
     manifest = build_marker_manifest(payload)
     if "{markers}" in tech_rules:
@@ -142,9 +168,14 @@ def build_translation_prompt(
         # Иначе блок дописывается сразу после тех. правил
         tech_rules = f"{tech_rules}\n\n{manifest}"
 
+    glossary_block = ""
+    if relevant_glossary:
+        lines = "\n".join(f"  {k} = {v}" for k, v in list(relevant_glossary.items())[:30])
+        glossary_block = f"\nGLOSSARY (use these exact translations for consistency):\n{lines}\n"
+
     return (
         f"{intro}\n\n"
-        f"{tech_rules}\n\n"
+        f"{tech_rules}{glossary_block}\n\n"
         f"DATA:\n{blob}"
     )
 
@@ -490,8 +521,8 @@ class BatchLlmEngine(TranslationEngine):
         *,
         force_translation: bool = False,
     ) -> list[str]:
-        PLACEHOLDER_THRESHOLD = 20
-        CHUNK_SIZE = 3
+        PLACEHOLDER_THRESHOLD = 8   # H1: lower from 20 to catch 8+ marker strings
+        CHUNK_SIZE = 4
         # Разделяем ключи на обычные и сложные
         normal_keys = []
         complex_keys = []
