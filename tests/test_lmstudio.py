@@ -254,10 +254,12 @@ class LmStudioApiTests(unittest.TestCase):
         )
 
         engine._request('Rules\n\nDATA:\n{"0": "Text"}', 120)
+        engine._request('Rules\n\nDATA:\n["Text", "More"]', 120)
         engine._request("Repair this one sentence", 120)
 
         batch_payload = session.post_calls[0][1]["json"]
-        repair_payload = session.post_calls[1][1]["json"]
+        array_payload = session.post_calls[1][1]["json"]
+        repair_payload = session.post_calls[2][1]["json"]
         response_format = batch_payload["response_format"]
         self.assertEqual(response_format["type"], "json_schema")
         self.assertEqual(
@@ -267,6 +269,10 @@ class LmStudioApiTests(unittest.TestCase):
         self.assertFalse(
             response_format["json_schema"]["schema"]["additionalProperties"]
         )
+        array_schema = array_payload["response_format"]["json_schema"]["schema"]
+        self.assertEqual(array_schema["type"], "array")
+        self.assertEqual(array_schema["minItems"], 2)
+        self.assertEqual(array_schema["maxItems"], 2)
         self.assertNotIn("response_format", repair_payload)
 
     def test_service_constructs_lmstudio_provider(self):

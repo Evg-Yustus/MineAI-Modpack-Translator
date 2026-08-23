@@ -45,10 +45,14 @@ def callbacks(
     )
 
 
-def prompt_payload(prompt: str) -> dict[str, str]:
+def prompt_payload(prompt: str) -> list[str]:
     for marker in ("DATA:\n", "Data: ", "Данные: "):
         if marker in prompt:
-            return json.loads(prompt.split(marker, 1)[1])
+            payload = json.loads(prompt.split(marker, 1)[1])
+            if isinstance(payload, list):
+                return payload
+            # Legacy prompt tests still exercise the compatibility parser.
+            return list(payload.values())
     raise AssertionError("Prompt does not contain a JSON payload marker")
 
 
@@ -88,11 +92,8 @@ class BatchLlmEngineTests(unittest.TestCase):
         def call_api(prompt: str, _limit: int) -> str:
             prompts.append(prompt)
             payload = prompt_payload(prompt)
-            self.assertEqual(list(payload), ["unit_0"])
-            return json.dumps(
-                {"unit_0": "Перевод заголовка"},
-                ensure_ascii=False,
-            )
+            self.assertEqual(payload, ["Sliding Doors"])
+            return json.dumps(["Перевод заголовка"], ensure_ascii=False)
 
         engine = BatchLlmEngine(call_api=call_api)
         internal_key = "json:/pages/0/title"
@@ -114,8 +115,8 @@ class BatchLlmEngineTests(unittest.TestCase):
         def call_api(prompt: str, _limit: int) -> str:
             prompts.append(prompt)
             payload = prompt_payload(prompt)
-            self.assertEqual(list(payload), ["unit_0"])
-            return json.dumps({"unit_0": "Перевод"}, ensure_ascii=False)
+            self.assertEqual(payload, ["Sliding Doors"])
+            return json.dumps(["Перевод"], ensure_ascii=False)
 
         engine = BatchLlmEngine(call_api=call_api)
         internal_key = "formatkit|assets/book.json|json:/pages/0/title"
@@ -129,7 +130,8 @@ class BatchLlmEngineTests(unittest.TestCase):
         source = " ".join(f"word{index} [#{index}#]" for index in range(21))
 
         def call_api(prompt: str, _limit: int) -> str:
-            return prompt.split("TEXT TO TRANSLATE:\n", 1)[1]
+            payload = prompt_payload(prompt)
+            return json.dumps(["слово" for _ in payload], ensure_ascii=False)
 
         engine = BatchLlmEngine(call_api=call_api)
         item = EngineItem("entry", source, source)
@@ -140,7 +142,7 @@ class BatchLlmEngineTests(unittest.TestCase):
             callbacks(),
         )
 
-        self.assertEqual(result, {"entry": source})
+        self.assertEqual(result["entry"], source)
 
     def test_old_bundled_prompts_are_upgraded_without_overwriting_custom_text(self) -> None:
         old = {
@@ -211,18 +213,16 @@ class BatchLlmEngineTests(unittest.TestCase):
                 duplicate = (
                     "Это ошибочно объединённый перевод двух разных длинных строк."
                 )
-                return json.dumps(
-                    {key: duplicate for key in payload}, ensure_ascii=False
-                )
+                return json.dumps([duplicate for _ in payload], ensure_ascii=False)
             return json.dumps(
-                {
-                    key: (
+                [
+                    (
                         "Первая строка переведена отдельно и корректно."
-                        if key == "first"
+                        if index == 0
                         else "Вторая строка переведена отдельно и корректно."
                     )
-                    for key in payload
-                },
+                    for index, _value in enumerate(payload)
+                ],
                 ensure_ascii=False,
             )
 
@@ -285,7 +285,7 @@ class BatchLlmEngineTests(unittest.TestCase):
         )
         self.assertEqual(
             [set(payload) for payload in calls],
-            [{"good", "broken"}],
+            [{"Generator", "Engineer's Crafting Table"}],
         )
 
     def test_hash_wrapped_template_variable_is_fully_protected(self) -> None:
@@ -341,14 +341,8 @@ class BatchLlmEngineTests(unittest.TestCase):
             payload = prompt_payload(prompt)
             calls.append(payload)
             if len(calls) == 1:
-                return json.dumps(
-                    {"description": "The [#0#]Футляр для самоцветов[#1#]"},
-                    ensure_ascii=False,
-                )
-            return json.dumps(
-                {"description": "[#0#]Футляр для самоцветов[#1#]"},
-                ensure_ascii=False,
-            )
+                return json.dumps(["The", "Футляр для самоцветов"], ensure_ascii=False)
+            return json.dumps(["", "Футляр для самоцветов"], ensure_ascii=False)
 
         engine = BatchLlmEngine(call_api=call_api, retries=1)
         items = {
@@ -365,7 +359,7 @@ class BatchLlmEngineTests(unittest.TestCase):
         self.assertEqual(result, {"description": "$(9)Футляр для самоцветов$()"})
         self.assertEqual(
             [set(payload) for payload in calls],
-            [{"description"}, {"description"}],
+            [{"The", "Gem Case"}, {"The", "Gem Case"}],
         )
 
     def test_retries_unchanged_translatable_title_with_stricter_prompt(self) -> None:
@@ -397,7 +391,7 @@ class BatchLlmEngineTests(unittest.TestCase):
             {"title": "Дополнения для карманного компьютера"},
         )
         self.assertEqual(len(prompts), 2)
-        self.assertIn("Do not copy ordinary source text unchanged", prompts[1])
+        self.assertIn("Do not copy English prose unchanged", prompts[1])
 
     def test_safe_prompt_requires_all_numbered_placeholders(self) -> None:
         prompt = build_translation_prompt(
@@ -464,7 +458,7 @@ class BatchLlmEngineTests(unittest.TestCase):
         self.assertEqual(result, {"first": "Первый", "second": "Второй"})
         self.assertEqual(
             [set(call) for call in calls],
-            [{"first", "second"}, {"second"}],
+            [{"First", "Second"}, {"Second"}],
         )
 
     def test_retries_only_the_value_with_a_lost_placeholder(self) -> None:
@@ -472,53 +466,39 @@ class BatchLlmEngineTests(unittest.TestCase):
         repair_calls: list[str] = []
 
         def call_api(prompt: str, _max_tokens: int) -> str:
-            if "BROKEN TRANSLATION:" in prompt:
-                repair_calls.append(prompt)
-                # Модель снова вернула JSON вместо текста — гвард обязан отклонить.
-                return json.dumps(
-                    {"power": "Требуется [#0#] RF/t"}, ensure_ascii=False
-                )
             payload = prompt_payload(prompt)
             calls.append(payload)
             if len(calls) == 1:
-                return json.dumps(
-                    {"power": "Требуется энергия", "title": "Генератор"},
-                    ensure_ascii=False,
-                )
-            return json.dumps(
-                {"power": "Требуется [#0#] RF/t"},
-                ensure_ascii=False,
-            )
+                return json.dumps(["Требуется", "Генератор"], ensure_ascii=False)
+            return json.dumps(["Требуется"], ensure_ascii=False)
 
         engine = BatchLlmEngine(call_api=call_api)
         items = {
             "power": EngineItem(
                 "power",
                 "Requires %s RF/t",
-                "Requires [#0#] RF/t",
-                {"[#0#]": "%s"},
+                "Requires [#0#] [#1#]",
+                {"[#0#]": "%s", "[#1#]": "RF/t"},
             ),
             "title": EngineItem("title", "Generator", "Generator"),
         }
         result = engine.translate_batch(items, TARGET_LANG, callbacks())
         self.assertEqual(result["power"], "Требуется %s RF/t")
         self.assertEqual(result["title"], "Генератор")
-        self.assertEqual(len(repair_calls), 1)
-        self.assertEqual(set(calls[1]), {"power"})
+        self.assertEqual(repair_calls, [])
+        self.assertEqual(len(calls), 1)
 
     def test_marker_repair_rescues_a_good_translation(self) -> None:
-        def call_api(prompt: str, _max_tokens: int) -> str:
-            if "BROKEN TRANSLATION:" in prompt:
-                return "Требуется [#0#] RF/t"
-            return json.dumps({"power": "Требуется энергия"}, ensure_ascii=False)
+        def call_api(_prompt: str, _max_tokens: int) -> str:
+            return json.dumps(["Требуется"], ensure_ascii=False)
 
         engine = BatchLlmEngine(call_api=call_api)
         items = {
             "power": EngineItem(
                 "power",
                 "Requires %s RF/t",
-                "Requires [#0#] RF/t",
-                {"[#0#]": "%s"},
+                "Requires [#0#] [#1#]",
+                {"[#0#]": "%s", "[#1#]": "RF/t"},
             ),
         }
         result = engine.translate_batch(items, TARGET_LANG, callbacks())
@@ -591,8 +571,7 @@ class BatchLlmEngineTests(unittest.TestCase):
         result = engine.translate_batch(items, TARGET_LANG, callbacks())
 
         self.assertEqual(result["key"], "Значение")
-        self.assertEqual(sum("BROKEN TRANSLATION:" in p for p in api_calls), 1)
-        self.assertEqual(sum("BROKEN TRANSLATION:" not in p for p in api_calls), 2)
+        self.assertEqual(sum("BROKEN TRANSLATION:" in p for p in api_calls), 0)
 
     def test_rejects_a_duplicated_placeholder(self) -> None:
         api_calls: list[str] = []
@@ -621,8 +600,7 @@ class BatchLlmEngineTests(unittest.TestCase):
         result = engine.translate_batch(items, TARGET_LANG, callbacks())
 
         self.assertEqual(result["key"], "Значение %s")
-        self.assertEqual(sum("BROKEN TRANSLATION:" in p for p in api_calls), 1)
-        self.assertEqual(sum("BROKEN TRANSLATION:" not in p for p in api_calls), 2)
+        self.assertEqual(sum("BROKEN TRANSLATION:" in p for p in api_calls), 0)
 
     def test_accepts_spaced_placeholder_syntax_used_by_unmasking(self) -> None:
         engine = BatchLlmEngine(
@@ -714,7 +692,7 @@ class BatchLlmEngineTests(unittest.TestCase):
         result = engine.translate_batch(items, TARGET_LANG, callbacks())
 
         self.assertEqual(result, {"first": "Первый", "second": "Второй"})
-        self.assertEqual(calls, [{"first", "second"}, {"first", "second"}])
+        self.assertEqual(calls, [{"First", "Second"}, {"First", "Second"}])
 
     def test_network_error_retries_the_whole_chunk(self) -> None:
         calls = 0

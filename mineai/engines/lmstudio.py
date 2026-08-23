@@ -19,6 +19,19 @@ def _translation_response_format(prompt: str) -> dict | None:
         data = json.loads(prompt.rsplit(marker, 1)[1])
     except (json.JSONDecodeError, TypeError):
         return None
+    if isinstance(data, list) and all(isinstance(value, str) for value in data):
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "translations",
+                "schema": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": len(data),
+                    "maxItems": len(data),
+                },
+            },
+        }
     if not isinstance(data, dict) or not all(
         isinstance(key, str) for key in data
     ):

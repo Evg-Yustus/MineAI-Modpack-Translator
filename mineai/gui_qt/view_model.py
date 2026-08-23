@@ -96,7 +96,9 @@ def stats_from_snapshot(snapshot, *, now: float | None = None, eta_text: str = "
     error_percent = (failed / denominator * 100.0) if denominator else 0.0
     current_time = time.time() if now is None else now
     if snapshot.start_time:
-        elapsed = max(0.0, current_time - snapshot.start_time)
+        elapsed = current_time - snapshot.start_time
+        elapsed -= max(0.0, float(getattr(snapshot, "paused_seconds", 0.0)))
+        elapsed = max(0.0, elapsed)
     else:
         elapsed = 0.0
     rate = processed / elapsed * 60.0 if elapsed > 0 and processed > 0 else 0.0

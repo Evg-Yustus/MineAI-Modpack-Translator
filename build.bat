@@ -1,10 +1,10 @@
-@echo off
+﻿@echo off
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
 echo =========================================
-echo  MineAI Translator — сборка EXE Beta41
+echo  MineAI Translator — сборка EXE Beta42
 echo =========================================
 echo.
 
@@ -30,22 +30,22 @@ if errorlevel 1 (
 echo    Все файлы корректны.
 
 echo [3/4] PyInstaller...
-python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta41.spec
+python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta42.spec
 if errorlevel 1 (
     echo Ошибка сборки.
     if not defined CI pause
     exit /b 1
 )
 
-if not exist "dist\MineAI_Translator_Beta41.exe" (
-    echo Ошибка: dist\MineAI_Translator_Beta41.exe не создан.
+if not exist "dist\MineAI_Translator_Beta42.exe" (
+    echo Ошибка: dist\MineAI_Translator_Beta42.exe не создан.
     if not defined CI pause
     exit /b 1
 )
 
 echo.
 echo [4/4] Готово!
-echo    EXE: dist\MineAI_Translator_Beta41.exe
+echo    EXE: dist\MineAI_Translator_Beta42.exe
 echo.
 echo Рядом с EXE положите при необходимости:
 echo    settings.ini, dictionary.json, glossary.json, cache.json

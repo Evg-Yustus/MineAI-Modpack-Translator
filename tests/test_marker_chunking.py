@@ -1,4 +1,4 @@
-"""Tests for H1: long texts with many [#N#] markers are split into sub-chunks."""
+﻿"""Tests for H1: long texts with many [#N#] markers are split into sub-chunks."""
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -59,12 +59,13 @@ class MarkerChunkingTests(unittest.TestCase):
         chunks = split_by_placeholders(text, max_per_chunk=4)
         self.assertEqual(chunks, [text])
 
-    def test_chunk_size_used_in_translate_chunk(self):
-        """PLACEHOLDER_THRESHOLD в _translate_chunk равен 8 (не 20)."""
+    def test_clean_transport_replaces_marker_threshold_gating(self):
+        """Новые запросы используют видимые узлы, а не порог маркеров."""
         import inspect
         from mineai.engines import llm_common
-        src = inspect.getsource(llm_common.BatchLlmEngine._translate_chunk)
-        self.assertIn("PLACEHOLDER_THRESHOLD = 8", src)
+        src = inspect.getsource(llm_common.BatchLlmEngine._translate_clean_chunk)
+        self.assertIn("extract_visible_nodes", src)
+        self.assertNotIn("PLACEHOLDER_THRESHOLD", src)
 
 
 if __name__ == "__main__":

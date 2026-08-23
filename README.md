@@ -1,7 +1,7 @@
 ﻿# 🌍 MineAI Translator (The Ultimate Modpack Localizer)
 
-[![Beta41](https://img.shields.io/badge/version-10.0.0--BETAv41-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
-[![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=beta41)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml?query=branch%3Abeta41)
+[![Beta42](https://img.shields.io/badge/version-10.0.0--BETAv42-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
+[![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=beta42)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml?query=branch%3Abeta42)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License review](https://img.shields.io/badge/FormatKit_license-review_required-orange.svg)](#license)
 
@@ -27,7 +27,7 @@ The program features a modern Graphical User Interface (GUI). You don't need to 
 You don't need to install Python or mess with code! You can download the ready-to-use application.
 
 1. Go to the [Releases](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases) tab on the right.
-2. Download the latest **`MineAI_Translator_Beta41.exe`** file.
+2. Download the latest **`MineAI_Translator_Beta42.exe`** file.
 3. Place it in a convenient folder and run it with a double click.
 
 *(For advanced users and developers, instructions on running from source code are at the bottom of the page).*
@@ -168,17 +168,19 @@ mineai/
 If you modified the code and want to build your own executable without a console window, simply run the provided batch file:
 `build.bat`
 
-The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta41.exe`.
+The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta42.exe`.
 
 ### FormatKit SDK
 
-Beta41 keeps the semantic-unit pipeline and quest-locale resolver from Beta40.
+Beta42 keeps the semantic-unit pipeline and quest-locale resolver from Beta41.
 FTB Quest references such as `{atm9.quest.example}` are resolved to their real
 KubeJS, resource-pack, or mod locale entries. Chapter/reward SNBT files are
 read-only inputs: item IDs, counts, dependencies, rewards and links are never
 translated or rewritten; only visible text is emitted to the language overlay.
-FormatKit JSON locators such as `json:/pages/0/title` are opaque transport
-details and are hidden from both LLM JSON payloads and Google requests.
+FormatKit JSON locators such as `json:/pages/0/title` are restored locally and
+never enter the new LLM transport. Local models receive only an ordered JSON
+array of visible text nodes; numbers, links, tags, colour codes, placeholders
+and whitespace are reinserted from the original skeleton after translation.
 The embedded architecture combines the standalone `mineai_formatkit` SDK.
 GuideME, IE, Patchouli, Modonomicon and locale JSON preserve their source
 serialization while exposing only visible text nodes.
@@ -263,15 +265,16 @@ API-токен нужен только тогда, когда авторизац
 
 Для сборки собственного `.exe` файла без окна консоли используйте готовый батник:
 `build.bat`
-(Результат появится в папке `dist/MineAI_Translator_Beta41.exe`).
+(Результат появится в папке `dist/MineAI_Translator_Beta42.exe`).
 
 ### SDK FormatKit
 
-Beta41 сохраняет семантический конвейер и резолвер словарей Beta40. Файлы
+Beta42 сохраняет семантический конвейер и резолвер словарей Beta41. Файлы
 глав и таблиц наград FTB Quests читаются только для анализа: ID предметов,
 количество, зависимости, награды и ссылки не переводятся и не переписываются,
 а видимый текст сохраняется в языковом overlay. Локаторы FormatKit вида
-`json:/pages/0/title` скрываются перед отправкой в LLM и Google. Проект
+`json:/pages/0/title` восстанавливаются из исходного шаблона и не попадают в
+новый запрос LLM: модель получает только видимые текстовые узлы. Проект
 объединяет смысловые блоки с отдельным SDK `mineai_formatkit`; GuideME, IE,
 Patchouli, Modonomicon и locale JSON проходят структурную проверку без
 передачи разметки переводчику. API и результаты корпусного аудита находятся в

@@ -7,6 +7,13 @@ from typing import Callable
 import requests
 
 from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
+from mineai.engines.clean_transport import (
+    VisibleTextNode,
+    extract_visible_nodes,
+    rebuild_masked,
+    response_is_clean,
+    sanitize_prompt_context,
+)
 from mineai.io_utils import atomic_write_text
 from mineai.language_validation import has_untranslated_leading_article
 from mineai.text_processing import (
@@ -121,9 +128,9 @@ _LEGACY_DEFAULT_PROMPTS = {
 
 def get_default_prompts() -> dict[str, str]:
     return {
-        "mods": "Ты локализатор Minecraft. Переведи каждое переданное значение с английского на {lang_name}. Используй привычные термины Minecraft и не добавляй пояснений.",
+        "mods": "Ты локализатор Minecraft. Переведи каждый переданный видимый текстовый узел с английского на {lang_name}. Коды, ссылки, числа, теги и структура уже удалены из запроса и восстанавливаются программой; не добавляй их и не добавляй пояснений.",
         "books": "Ты локализатор книг и справочников Minecraft. Переведи только переданные видимые текстовые узлы на {lang_name}, естественно и с учётом контекста «{context}». Не добавляй разметку, ссылки, теги, цвета, числа или переносы: программа восстанавливает их из оригинала.",
-        "quests": "Ты локализатор квестов Minecraft. Переведи каждое переданное название или описание из «{context}» на {lang_name}. Сохраняй игровой смысл, требования и терминологию; не добавляй новые факты.",
+        "quests": "Ты локализатор квестов Minecraft. Переведи каждый переданный видимый текстовый узел названия или описания из «{context}» на {lang_name}. Коды, ссылки, числа и JSON-структура восстанавливаются программой; не добавляй их и не добавляй новые факты.",
         "technical": "STRICT RULES:\n1. Do not translate or change JSON keys.\n2. Preserve ALL [#N#] placeholders exactly and in the same order. Placeholders are immutable source fragments, including numbers and game codes. DO NOT drop, repeat, rename or reorder them.\n3. Translate every JSON value independently. Never merge neighboring values or copy one answer into another key.\n4. MUST escape all newlines as \\n. DO NOT output raw/literal newlines inside JSON strings.\n5. Output ONLY one raw valid JSON object with the original keys. No markdown, explanations or introductory text."
     }
 
@@ -246,6 +253,73 @@ def build_translation_prompt(
     )
 
 
+def build_clean_translation_prompt(
+    payload: list[str],
+    lang_name: str,
+    *,
+    mode: str,
+    context: str,
+    prompt_type: str = "mods",
+    force_translation: bool = False,
+) -> str:
+    """Build a prompt whose data section contains visible text only.
+
+    Unlike the legacy object transport, this protocol has no adapter keys and
+    no marker values.  The array order is the only association the caller
+    needs; the original template is restored locally after the response.
+    """
+
+    blob = json.dumps(payload, ensure_ascii=False)
+    prompts = load_prompts()
+    intro_template = prompts.get(prompt_type, get_default_prompts()["mods"])
+    safe_context = sanitize_prompt_context(context)
+    intro = intro_template.replace("{lang_name}", lang_name).replace("{context}", safe_context)
+    if prompt_type == "books" and lang_name.casefold() in {"russian", "русский"}:
+        intro += (
+            "\nPreferred Minecraft terminology for Russian:\n"
+            "- Copy Paste Gadget = Гаджет копирования и вставки\n"
+            "- Cut Paste Gadget = Гаджет вырезания и вставки\n"
+            "- Potion Charm = Амулет зелья\n"
+            "- Gem Case = Футляр для самоцветов"
+        )
+    if force_translation:
+        intro += (
+            "\nEvery array element below requires a real translation. "
+            f"Do not copy English prose unchanged; translate it naturally into {lang_name}."
+        )
+
+    glossary = load_glossary()
+    payload_text = " ".join(payload).lower()
+    relevant_glossary = {
+        key: value
+        for key, value in glossary.items()
+        if (key.lower() in payload_text or key.lower().rstrip("s") in payload_text)
+        and response_is_clean(key)
+        and response_is_clean(value)
+    }
+    glossary_block = ""
+    if relevant_glossary:
+        lines = "\n".join(
+            f"  {key} = {value}" for key, value in list(relevant_glossary.items())[:30]
+        )
+        glossary_block = (
+            "\nGLOSSARY (use these exact translations for consistency):\n"
+            f"{lines}\n"
+        )
+
+    rules = (
+        "STRICT TRANSPORT RULES:\n"
+        "1. DATA is an ordered JSON array of visible prose fragments.\n"
+        "2. Return exactly one JSON array of strings, with the same length and order.\n"
+        "3. Translate only the text in each element. Do not add markup, links, tags, "
+        "formatting codes, numbers, placeholders or explanations.\n"
+        "4. The application restores all protected syntax, spacing and document structure.\n"
+        "5. Never merge, split, reorder, omit or duplicate array elements.\n"
+        "6. Output only valid JSON; no Markdown fences or commentary."
+    )
+    return f"{intro}\n\n{rules}{glossary_block}\n\nDATA:\n{blob}"
+
+
 def parse_llm_json_response(content: str) -> dict[str, object]:
     # Убираем markdown-обёртки (```json ... ```)
     text = re.sub(
@@ -301,6 +375,65 @@ def parse_llm_json_response(content: str) -> dict[str, object]:
     if not isinstance(data, dict):
         raise TypeError("LLM response is not a JSON object")
     return data
+
+
+def parse_llm_array_response(content: str) -> list[str]:
+    """Parse the clean transport response and require an array of strings."""
+
+    text = re.sub(
+        r"^```(?:json)?\s*\n?|\n?```$",
+        "",
+        str(content or "").strip(),
+        flags=re.IGNORECASE | re.MULTILINE,
+    ).strip()
+    start_idx = text.find("[")
+    if start_idx < 0:
+        raise TypeError("LLM response is not a JSON array")
+
+    stack = 0
+    in_str = False
+    escaped = False
+    end_idx = None
+    for index in range(start_idx, len(text)):
+        char = text[index]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_str = False
+            continue
+        if char == '"':
+            in_str = True
+        elif char == "[":
+            stack += 1
+        elif char == "]":
+            stack -= 1
+            if stack == 0:
+                end_idx = index + 1
+                break
+    if end_idx is None:
+        raise TypeError("unterminated JSON array")
+    text = text[start_idx:end_idx]
+
+    # A few local models emit literal line breaks inside JSON strings.  Keep the
+    # parser as forgiving as the legacy object parser, without accepting objects
+    # or arbitrary scalar responses.
+    def _fix_newlines_in_strings(match: re.Match) -> str:
+        return match.group(0).replace("\n", "\\n").replace("\r", "\\r")
+
+    text = re.sub(r'"(?:[^"\\]|\\.)*"', _fix_newlines_in_strings, text)
+    text = re.sub(
+        r'\\(["\\/bfnrtu]|u[0-9a-fA-F]{4})|\\',
+        lambda match: match.group(0) if match.group(1) else r"\\\\",
+        text,
+    )
+    data = json.loads(text)
+    if not isinstance(data, list) or not all(isinstance(value, str) for value in data):
+        raise TypeError("LLM response array must contain only strings")
+    return data
+
 
 def placeholders_match(text: str, expected_text: str) -> bool:
     """Return whether placeholders are preserved with exact ids, counts and order."""
@@ -546,22 +679,10 @@ class BatchLlmEngine(TranslationEngine):
             )
             
             # --- СИСТЕМА КАСКАДНЫХ ПОВТОРОВ (10 -> 5 -> 1) ---
-            # Фильтруем безнадёжные строки (>20 маркеров) — их повторять бессмысленно
-            hopeless = [
-                k for k in failed
-                if len(PLACEHOLDER_PATTERN.findall(items[k].masked)) > 20
-            ]
-            if hopeless:
-                callbacks.on_log(
-                    f"⚠️ {self.label}: {len(hopeless)} строк с >20 маркерами — повторы отключены",
-                    "yellow",
-                )
-                # ВАЖНО: НЕ кладём оригинал в result! Иначе сервис закэширует
-                # "английский = английский", и строка никогда не переведётся.
-                # Просто убираем из failed: ретраи бесполезны, а сервис сам
-                # подставит оригинал (без кэша) или отдаст строку в Google-фоллбэк.
-                failed = [k for k in failed if k not in hopeless]
-
+            # В Beta42 даже строки с большим числом защищённых фрагментов
+            # передаются как чистые видимые узлы, поэтому для них безопасны
+            # обычные повторы.  Ранее такие строки ошибочно считались
+            # «безнадёжными» из-за количества маркеров.
             active_retries = RETRY_BATCH_SIZES[:self.retries]
             for retry_number, retry_batch_size in enumerate(
                 active_retries,
@@ -608,6 +729,209 @@ class BatchLlmEngine(TranslationEngine):
         return result
 
     def _translate_chunk(
+        self,
+        chunk_keys: list[str],
+        items: dict[str, EngineItem],
+        target_lang: dict,
+        result: dict[str, str],
+        callbacks: EngineCallbacks,
+        *,
+        force_translation: bool = False,
+    ) -> list[str]:
+        """Translate a batch using only visible text nodes.
+
+        The legacy marker/object implementation remains below as a private
+        compatibility reference, but all new requests use this lossless path.
+        """
+
+        return self._translate_clean_chunk(
+            chunk_keys,
+            items,
+            target_lang,
+            result,
+            callbacks,
+            force_translation=force_translation,
+        )
+
+    def _translate_clean_chunk(
+        self,
+        chunk_keys: list[str],
+        items: dict[str, EngineItem],
+        target_lang: dict,
+        result: dict[str, str],
+        callbacks: EngineCallbacks,
+        *,
+        force_translation: bool = False,
+    ) -> list[str]:
+        node_map: dict[str, tuple[VisibleTextNode, ...]] = {
+            key: extract_visible_nodes(items[key].masked) for key in chunk_keys
+        }
+        flat_nodes: list[tuple[str, VisibleTextNode]] = [
+            (key, node)
+            for key in chunk_keys
+            for node in node_map[key]
+        ]
+
+        # A value made entirely of protected syntax (for example an item id or
+        # a colour-only label) has no translatable payload.  Keep its exact
+        # source rather than asking an engine to hallucinate a replacement.
+        rebuilt_by_key: dict[str, str] = {}
+        for key in chunk_keys:
+            if not node_map[key]:
+                result[key] = items[key].original
+
+        if not flat_nodes:
+            return []
+
+        payload = [node.text for _key, node in flat_nodes]
+        prompt = build_clean_translation_prompt(
+            payload,
+            target_lang["name"],
+            mode=self.mode,
+            context=self.context,
+            prompt_type=self.prompt_type,
+            force_translation=force_translation,
+        )
+        callbacks.on_status(f"⏳ {self.label}: чистый пакет {len(payload)}...")
+        try:
+            content = self._call_api(prompt, self.max_tokens)
+            if not content:
+                return list(chunk_keys)
+            try:
+                translated_nodes = parse_llm_array_response(content)
+            except (TypeError, json.JSONDecodeError):
+                # Older user prompts/custom local servers may still return the
+                # pre-Beta42 object protocol.  Accept it as a compatibility
+                # path, while all newly generated requests remain arrays of
+                # clean text nodes.
+                legacy = parse_llm_json_response(content)
+                return self._accept_legacy_result(
+                    chunk_keys,
+                    items,
+                    target_lang,
+                    result,
+                    legacy,
+                )
+            if len(translated_nodes) != len(payload):
+                dump_ai_error(
+                    prompt,
+                    content,
+                    f"Неверное число текстовых узлов: ожидалось {len(payload)}, "
+                    f"получено {len(translated_nodes)}",
+                )
+                return list(chunk_keys)
+        except (json.JSONDecodeError, TypeError, ValueError, requests.RequestException) as exc:
+            dump_ai_error(prompt, content if "content" in locals() else "Нет ответа", str(exc))
+            callbacks.on_log(
+                f"❌ {self.label}: неверный ответ чистого транспорта "
+                "(сохранен в ai_error_log.txt)",
+                "red",
+            )
+            return list(chunk_keys)
+
+        translated_by_key: dict[str, list[str]] = {key: [] for key in chunk_keys}
+        failed: set[str] = set()
+        for (key, node), translated in zip(flat_nodes, translated_nodes):
+            value = translated.strip()
+            can_drop_article = (
+                not value
+                and node.text.casefold() in {"a", "an", "the"}
+                and target_lang.get("api") != "en"
+            )
+            if not can_drop_article and not response_is_clean(value):
+                failed.add(key)
+                continue
+            translated_by_key[key].append(value)
+
+        for key in chunk_keys:
+            nodes = node_map[key]
+            if not nodes:
+                continue
+            if key in failed or len(translated_by_key[key]) != len(nodes):
+                failed.add(key)
+                continue
+            item = items[key]
+            try:
+                rebuilt = rebuild_masked(
+                    item.masked,
+                    nodes,
+                    translated_by_key[key],
+                )
+            except ValueError:
+                failed.add(key)
+                continue
+            if count_line_breaks(rebuilt) != count_line_breaks(item.masked):
+                failed.add(key)
+                continue
+            if translation_length_issue(item.masked, rebuilt):
+                failed.add(key)
+                continue
+            if has_untranslated_leading_article(item.masked, rebuilt, target_lang):
+                failed.add(key)
+                continue
+            if _is_untranslated_candidate(item, rebuilt, target_lang):
+                failed.add(key)
+                continue
+            rebuilt_by_key[key] = rebuilt
+
+        duplicate_keys = suspicious_duplicate_keys(
+            {key: items[key].masked for key in rebuilt_by_key},
+            rebuilt_by_key,
+        )
+        failed.update(duplicate_keys)
+        for key, rebuilt in rebuilt_by_key.items():
+            if key in failed:
+                continue
+            item = items[key]
+            text = unmask_translation(rebuilt, item.mapping)
+            result[key] = polish_translation(text, boundary_source=item.original)
+
+        if failed:
+            callbacks.on_log(
+                f"❌ {self.label}: не прошли проверку — {len(failed)} строк",
+                "red",
+            )
+        return [key for key in chunk_keys if key in failed]
+
+    def _accept_legacy_result(
+        self,
+        chunk_keys: list[str],
+        items: dict[str, EngineItem],
+        target_lang: dict,
+        result: dict[str, str],
+        translated: dict[str, object],
+    ) -> list[str]:
+        """Read a legacy object response without exposing its keys to the LLM."""
+
+        by_key: dict[str, object] = {
+            key: translated[key] for key in chunk_keys if key in translated
+        }
+        if not by_key and len(translated) == len(chunk_keys):
+            by_key = dict(zip(chunk_keys, translated.values()))
+        failed: list[str] = []
+        for key in chunk_keys:
+            raw = by_key.get(key)
+            if not isinstance(raw, str):
+                failed.append(key)
+                continue
+            raw = _fix_marker_typos(raw, items[key].masked)
+            raw = collapse_added_line_breaks(items[key].masked, raw)
+            if (
+                count_line_breaks(raw) != count_line_breaks(items[key].masked)
+                or translation_length_issue(items[key].masked, raw)
+                or has_untranslated_leading_article(items[key].masked, raw, target_lang)
+                or _is_untranslated_candidate(items[key], raw, target_lang)
+                or not placeholders_match(raw, items[key].masked)
+            ):
+                failed.append(key)
+                continue
+            result[key] = polish_translation(
+                unmask_translation(raw, items[key].mapping),
+                boundary_source=items[key].original,
+            )
+        return failed
+
+    def _translate_chunk_legacy(
         self,
         chunk_keys: list[str],
         items: dict[str, EngineItem],
