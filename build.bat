@@ -9,15 +9,23 @@ echo =========================================
 echo.
 
 echo [1/4] Зависимости...
-python -m pip install -r requirements.txt pyinstaller -q
+py -3 -m pip install -r requirements-qt.txt pyinstaller -q
 if errorlevel 1 (
     echo Ошибка: не удалось установить пакеты. Проверьте Python 3.10+
     if not defined CI pause
     exit /b 1
 )
 
+py -3 -c "import PyQt6" >nul 2>&1
+if errorlevel 1 (
+    echo Ошибка: PyQt6 не установлен в этом Python-окружении.
+    echo Установите зависимости из requirements-qt.txt и повторите сборку.
+    if not defined CI pause
+    exit /b 1
+)
+
 echo [2/4] Проверка синтаксиса всех файлов...
-python -m compileall mineai/ formatkit/ mineai_formatkit/ translator.py -q
+py -3 -m compileall mineai/ formatkit/ mineai_formatkit/ translator.py -q
 if errorlevel 1 (
     echo.
     echo =============================================
@@ -30,7 +38,7 @@ if errorlevel 1 (
 echo    Все файлы корректны.
 
 echo [3/4] PyInstaller...
-python -m PyInstaller --noconfirm --clean MineAI_Translator_Beta42.spec
+py -3 -m PyInstaller --noconfirm --clean MineAI_Translator_Beta42.spec
 if errorlevel 1 (
     echo Ошибка сборки.
     if not defined CI pause

@@ -1,12 +1,21 @@
-# -*- mode: python ; coding: utf-8 -*-
+﻿# -*- mode: python ; coding: utf-8 -*-
 
+qt_datas = []
+qt_binaries = []
+qt_hiddenimports = [
+    "PyQt6",
+    "PyQt6.sip",
+    "PyQt6.QtCore",
+    "PyQt6.QtGui",
+    "PyQt6.QtWidgets",
+]
 
 a = Analysis(
     ['mineai/__main__.py'],
     pathex=[],
-    binaries=[],
-    datas=[('icon.ico', '.')],
-    hiddenimports=[],
+    binaries=qt_binaries,
+    datas=qt_datas + [('icon.ico', '.')],
+    hiddenimports=qt_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

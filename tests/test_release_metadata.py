@@ -30,6 +30,25 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertNotIn("dictionary.json", spec)
         self.assertNotIn("glossary.json", spec)
 
+    def test_spec_collects_qt_runtime_for_frozen_gui(self):
+        spec = (ROOT / f"MineAI_Translator_Beta{self.beta}.spec").read_text(encoding="utf-8-sig")
+        self.assertIn("qt_hiddenimports", spec)
+        for module in ("PyQt6.QtCore", "PyQt6.QtGui", "PyQt6.QtWidgets"):
+            self.assertIn(f'"{module}"', spec)
+
+    def test_windows_package_job_smokes_the_frozen_qt_app(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8-sig")
+        self.assertIn("QT_QPA_PLATFORM", workflow)
+        self.assertIn("HasExited", workflow)
+        self.assertIn("$size -lt 30000000", workflow)
+        self.assertIn("taskkill /PID", workflow)
+
+    def test_build_script_uses_python_launcher(self):
+        build = (ROOT / "build.bat").read_text(encoding="utf-8-sig")
+        self.assertIn("py -3 -m pip", build)
+        self.assertIn("py -3 -m PyInstaller", build)
+        self.assertNotIn("python -m pip", build)
+
     def test_cache_marker_contains_release_and_validator_fingerprint(self):
         self.assertIn(__version__, _CACHE_VALIDATION_VERSION)
         self.assertRegex(_CACHE_VALIDATION_VERSION, r"\|[0-9a-f]{12}$")
