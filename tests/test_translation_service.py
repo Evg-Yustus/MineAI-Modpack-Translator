@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import tempfile
 import unittest
@@ -123,6 +123,37 @@ def _callbacks(logs, progress=None):
 
 
 class TranslationServiceRegressionTests(unittest.TestCase):
+    def test_duplicate_formatkit_units_are_sent_once_and_reused(self):
+        engine = _Engine(
+            lambda items: {
+                next(iter(items)): "Раздвижные двери",
+            }
+        )
+        sources = {
+            "json:/pages/0/title": "Sliding Doors",
+            "json:/pages/1/title": "Sliding Doors",
+        }
+
+        result = _Service(
+            engine,
+            _MemoryCache(),
+            _Config(),
+        ).translate_dict(
+            sources,
+            TARGET_LANG,
+            _callbacks([]),
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "json:/pages/0/title": "Раздвижные двери",
+                "json:/pages/1/title": "Раздвижные двери",
+            },
+        )
+        self.assertEqual(len(engine.calls), 1)
+        self.assertEqual(set(engine.calls[0]), {"json:/pages/0/title"})
+
     def test_numeric_and_numeric_unit_values_never_reach_any_engine(self):
         for engine_name in ("ai", "google"):
             with self.subTest(engine=engine_name):

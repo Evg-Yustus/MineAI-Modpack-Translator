@@ -1,4 +1,4 @@
-"""Tests for M1/M2/L1/L2 improvements."""
+﻿"""Tests for M1/M2/L1/L2 improvements."""
 import json
 import os
 import tempfile
@@ -32,6 +32,22 @@ class GlossaryTests(unittest.TestCase):
             self.assertIn("Nether", g)
         finally:
             os.unlink(tmp_path)
+
+    def test_missing_glossary_is_materialized_with_defaults(self):
+        import mineai.engines.llm_common as lc
+
+        with tempfile.TemporaryDirectory() as directory:
+            missing = os.path.join(directory, "glossary.json")
+            original = lc.GLOSSARY_FILE
+            try:
+                lc.GLOSSARY_FILE = missing
+                glossary = load_glossary()
+                self.assertTrue(os.path.exists(missing))
+                self.assertIn("Nether", glossary)
+                with open(missing, encoding="utf-8") as stream:
+                    self.assertIn("Nether", json.load(stream))
+            finally:
+                lc.GLOSSARY_FILE = original
 
     def test_glossary_injected_when_term_in_payload(self):
         """Relevant glossary terms appear in prompt GLOSSARY block."""

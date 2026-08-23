@@ -170,6 +170,30 @@ class EngineCancellationTests(unittest.TestCase):
         self.assertEqual(result, {"k": "Читайте [руководство](guide.md)."})
         self.assertEqual(request.call_count, 2)
 
+    def test_google_sends_only_text_not_structured_unit_id(self):
+        engine = GoogleEngine(workers=1, mode="single")
+        internal_key = "json:/pages/0/title"
+        item = EngineItem(
+            key=internal_key,
+            original="Sliding Doors",
+            masked="Sliding Doors",
+        )
+
+        with mock.patch.object(
+            engine,
+            "_request",
+            return_value="Раздвижные двери",
+        ) as request:
+            result = engine.translate_batch(
+                {internal_key: item},
+                {"api": "ru"},
+                self.callbacks(),
+            )
+
+        self.assertEqual(result, {internal_key: "Раздвижные двери"})
+        self.assertEqual(request.call_args.args[0], "Sliding Doors")
+        self.assertNotIn(internal_key, request.call_args.args[0])
+
     def test_google_batch_retries_smeared_duplicate_rows_separately(self):
         engine = GoogleEngine(workers=1, mode="batch")
         items = {

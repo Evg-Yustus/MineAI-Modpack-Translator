@@ -36,49 +36,13 @@ MineAI Modpack Translator. Исходной точкой была версия `
 | BETAv38 | 13.08.2026 | Датапак каждого мира и стабильные DescriptionId Modonomicon |
 | BETAv39 | 15.08.2026 | Полный журнал и автоматический выбор загруженных моделей LM Studio |
 | BETAv40 | 15.08.2026 | Связанные словари FTB Quests и полное покрытие квестов ATM9 |
-| BETAv41 | 16.08.2026 | Вынос текста FTB Quests chapter/RT в lang/ru_ru.snbt без перезаписи исходников |
-| BETAv42 | 16.08.2026 | Исправления C1/H1/H2: пробелы после цветовых кодов, порог дробления маркеров (20→8), защита имён модов |
-
-| BETAv42 | 16.08.2026 | Исправления C1/H1/H2: пробелы после цветовых кодов, порог дробления маркеров (20→8), защита имён модов |
-
----
-
-## 10.1.0 — BETAv42
-
-Дата сборки: 16.08.2026.
-
-### C1 — Пробелы после цветовых кодов (критическое)
-
-**Проблема**: `unmask_translation` восстанавливал маркер `[#0#]` → `&a`, но если AI добавил пробел (`[#0#] Глава`), результат был `&a Глава` (видимый пробел в игре).
-
-**Решение**: После восстановления всех маркеров применяется `re.sub(r"([&§][...]) (?=\S)", ...)` в `mineai/text_processing.py`.
-
-### H1 — Порог дробления строк с маркерами
-
-**Проблема**: Строки с 8–20 маркерами не разбивались на чанки, хотя AI регулярно путал маркеры (121 ошибка в тесте Beta40).
-
-**Решение**: `PLACEHOLDER_THRESHOLD` снижен с 20 до **8** в `BatchLlmEngine._translate_chunk`. При 9+ маркерах строка авто-разбивается на чанки по ≤4 маркера (с двумя попытками на каждый).
-
-### H2 — Защита имён модов от перевода
-
-**Проблема**: AI переводил `Create` → `Создание`, `Powah` → `Пауэ`, `Apotheosis` → `Апофеоз`.
-
-**Решение**: 25+ имён модов добавлены в `IGNORE_TERMS` (`constants.py`). `IGNORE_PATTERN` применяется в `mask_protected_fragments`, маскируя имена маркерами перед отправкой AI.
-
-Добавлены имена: `Applied Energistics`, `Industrial Foregoing`, `Silent Gear`, `Twilight Forest`, `Refined Storage`, `Blood Magic`, `Thermal Expansion/Foundation/Dynamics`, `Tinkers Construct`, `Mekanism`, `Botania`, `Apotheosis`, `Allthemodium`, `Powah`, `Create`, и другие.
-
-### Тесты
-
-- `tests/test_format_code_space.py` — 11 тестов C1
-- `tests/test_marker_chunking.py` — 7 тестов H1  
-- `tests/test_mod_name_protection.py` — 11 тестов H2
-- Итого: **500 тестов, все зелёные** (+29 к Beta41)
+| BETAv41 | 23.08.2026 | Финальная стабилизация: безопасные FTB Quests, opaque JSON IDs, динамический кэш и внешние словари |
 
 ---
 
 ## 10.0.0 — BETAv41
 
-Дата сборки: 16.08.2026.
+Дата сборки: 23.08.2026.
 
 ### Проблема
 
@@ -117,13 +81,35 @@ MineAI Modpack Translator. Исходной точкой была версия `
 | `mineai/processors/snbt.py` | Разделение на chapter vs lang-catalog режимы |
 | `mineai/runtime/job.py` | Вызов `flush_accumulated_lang()`, `import os` |
 | `mineai/processors/estimator.py` | Ветка оценки для chapter SNBT |
-| `tests/test_snbt_chapter_lang.py` | **[NEW]** 23 unit-теста нового модуля |
+| `tests/test_snbt_chapter_lang.py` | **[NEW]** 25 unit-тестов нового модуля |
 
 ### Проверка
 
-- `python -m pytest tests/ -q` → **471 passed** (было 448 до Beta41).
-- Запуск на любой сборке с FTB Quests: chapter/*.snbt не изменяются,
-  `config/ftbquests/quests/lang/ru_ru.snbt` создаётся с переведёнными строками.
+- `python -m unittest discover -s tests -v` — полный набор автотестов без
+  зависимости от pytest: **521 тест, 21 штатно пропущен**.
+- Запуск на любой сборке с FTB Quests: chapter/reward-table `*.snbt` не
+  изменяются, `config/ftbquests/quests/lang/ru_ru.snbt` создаётся с
+  переведёнными строками.
+
+### Финальная стабилизация Beta41 (23.08.2026)
+
+- Игровые поля FTB Quests (ID предметов, количество, зависимости, награды,
+  ссылки и структура SNBT) остаются byte-stable: переводятся только
+  allowlist-поля видимого текста, затем создаётся lang-overlay.
+- Адаптер FTB Quests теперь принимает реальные списки `description` и
+  Mojang-SNBT escape-последовательности (`\\ `); полный корпус из **291 chapter
+  и 257 reward_tables (6945 units)** проходит identity-реконструкцию без
+  единого структурного сбоя.
+- Идентификаторы FormatKit вида `json:/pages/0/title` и составные локаторы
+  заменяются на одноразовые opaque-ключи перед отправкой в LLM; Google получает
+  только текстовые значения. После ответа исходные ключи восстанавливаются.
+- Маркер AI-кэша вычисляется из `__version__`, сигнатуры и хэша исходника
+  `polish_translation`; ручной инкремент больше не требуется.
+- `dictionary.json` и `glossary.json` не входят в EXE и создаются с дефолтным
+  содержимым при первом запуске, сохраняя пользовательские правки при обновлении.
+- Контрактный тест релиза автоматически сверяет текущий `BETAvN` с EXE, spec,
+  README и CI, поэтому будущая версия не сможет незаметно остаться на старом
+  имени артефакта.
 
 ---
 

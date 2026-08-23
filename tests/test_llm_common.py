@@ -82,6 +82,49 @@ class ServiceWithEngine(TranslationService):
 
 
 class BatchLlmEngineTests(unittest.TestCase):
+    def test_structured_json_unit_ids_are_not_sent_to_llm(self) -> None:
+        prompts: list[str] = []
+
+        def call_api(prompt: str, _limit: int) -> str:
+            prompts.append(prompt)
+            payload = prompt_payload(prompt)
+            self.assertEqual(list(payload), ["unit_0"])
+            return json.dumps(
+                {"unit_0": "Перевод заголовка"},
+                ensure_ascii=False,
+            )
+
+        engine = BatchLlmEngine(call_api=call_api)
+        internal_key = "json:/pages/0/title"
+        item = EngineItem(internal_key, "Sliding Doors", "Sliding Doors")
+
+        result = engine.translate_batch(
+            {internal_key: item},
+            TARGET_LANG,
+            callbacks(),
+        )
+
+        self.assertEqual(result, {internal_key: "Перевод заголовка"})
+        self.assertEqual(len(prompts), 1)
+        self.assertNotIn("json:/pages/0/title", prompts[0])
+
+    def test_composite_formatkit_json_locators_are_not_sent_to_llm(self) -> None:
+        prompts: list[str] = []
+
+        def call_api(prompt: str, _limit: int) -> str:
+            prompts.append(prompt)
+            payload = prompt_payload(prompt)
+            self.assertEqual(list(payload), ["unit_0"])
+            return json.dumps({"unit_0": "Перевод"}, ensure_ascii=False)
+
+        engine = BatchLlmEngine(call_api=call_api)
+        internal_key = "formatkit|assets/book.json|json:/pages/0/title"
+        item = EngineItem(internal_key, "Sliding Doors", "Sliding Doors")
+        result = engine.translate_batch({internal_key: item}, TARGET_LANG, callbacks())
+
+        self.assertEqual(result, {internal_key: "Перевод"})
+        self.assertNotIn("json:/pages/0/title", prompts[0])
+
     def test_complex_chunk_reassembly_preserves_boundary_spaces(self) -> None:
         source = " ".join(f"word{index} [#{index}#]" for index in range(21))
 

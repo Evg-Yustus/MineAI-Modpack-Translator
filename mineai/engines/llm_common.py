@@ -26,17 +26,81 @@ RETRY_BATCH_SIZES = (10, 5, 1)
 PROMPTS_FILE = "prompts.json"
 GLOSSARY_FILE = "glossary.json"
 
+# User dictionaries are intentionally external to the executable.  A compact
+# seed is materialized beside the application on first use and can then be
+# edited without rebuilding the EXE.
+DEFAULT_GLOSSARY = {
+    "_comment": "MineAI default glossary; edit this file to customize terms.",
+    "Nether": "Нижний мир",
+    "The End": "Край",
+    "Overworld": "Обычный мир",
+    "Quest": "Квест",
+    "Quests": "Квесты",
+    "Reward": "Награда",
+    "Chapter": "Глава",
+    "Task": "Задание",
+    "Crafting Table": "Верстак",
+    "Furnace": "Печь",
+    "Blast Furnace": "Плавильная печь",
+    "Smoker": "Коптильня",
+    "Anvil": "Наковальня",
+    "Ore": "Руда",
+    "Ingot": "Слиток",
+    "Nugget": "Самородок",
+    "Dust": "Пыль",
+    "Machine": "Машина",
+    "Generator": "Генератор",
+    "Reactor": "Реактор",
+    "Tank": "Бак",
+    "Pipe": "Труба",
+    "Cable": "Кабель",
+    "Energy": "Энергия",
+    "Power": "Мощность",
+    "Fluid": "Жидкость",
+    "Gas": "Газ",
+    "Tier": "Уровень",
+    "Upgrade": "Улучшение",
+    "Progress": "Прогресс",
+    "Unlock": "Разблокировать",
+    "Complete": "Завершить",
+    "Craft": "Создать",
+    "Smelt": "Переплавить",
+    "Mine": "Добыть",
+    "Kill": "Убить",
+    "Obtain": "Получить",
+    "Collect": "Собрать",
+    "Reach": "Достичь",
+}
+
 
 def load_glossary() -> dict[str, str]:
     """Load eng->target glossary from glossary.json; skip comment keys (_...)."""
     if not os.path.exists(GLOSSARY_FILE):
-        return {}
+        payload = json.dumps(DEFAULT_GLOSSARY, ensure_ascii=False, indent=4)
+        try:
+            atomic_write_text(GLOSSARY_FILE, payload)
+        except OSError:
+            # A read-only install can still translate with the built-in seed.
+            pass
+        return {k: v for k, v in DEFAULT_GLOSSARY.items() if not k.startswith("_")}
     try:
         with open(GLOSSARY_FILE, encoding="utf-8") as f:
             raw = json.load(f)
-        return {k: v for k, v in raw.items() if not k.startswith("_")}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            k: v for k, v in raw.items()
+            if isinstance(k, str) and isinstance(v, str) and not k.startswith("_")
+        }
     except Exception:
         return {}
+
+
+# Materialize the editable glossary during application startup just like the
+# existing dictionary loader does.  Translation prompts still reload it so
+# edits made while the program is open are picked up by the next batch.
+load_glossary()
+
 
 _LEGACY_DEFAULT_PROMPTS = {
     "mods": {
@@ -143,6 +207,8 @@ def build_translation_prompt(
     tech_rules += (
         "\nEach JSON key is an independent source row. Never combine text from "
         "different keys and never copy one key's translation into another key."
+        "\nTransport keys are opaque IDs; return them exactly and never reproduce "
+        "internal file paths or adapter locators in a value."
     )
 
     # --- ЯВНЫЙ СПИСОК МАРКЕРОВ: что именно нельзя менять ---
@@ -252,6 +318,36 @@ def _suspicious_duplicate_keys(
         {key: items[key].masked for key in keys},
         {key: translated.get(key) for key in keys},
     )
+
+
+def _wire_key_map(keys: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Hide structured adapter locators from the LLM transport payload.
+
+    FormatKit uses ids such as ``json:/pages/0/title`` to put a translated
+    value back into the original document.  Those ids are implementation
+    details, not text for the model.  Keep ordinary legacy keys unchanged for
+    compatibility, but replace structured JSON locators with opaque per-call
+    ids and restore the original ids immediately after parsing the response.
+    """
+    wire_by_internal: dict[str, str] = {}
+    internal_by_wire: dict[str, str] = {}
+    used = set(keys)
+    next_id = 0
+    for key in keys:
+        is_structured = key.startswith(
+            ("json:", "key:", "line:", "span:", "token:", "oracle-meta:")
+        ) or "#json:" in key or "json:/" in key
+        if not is_structured:
+            wire_key = key
+        else:
+            while True:
+                wire_key = f"unit_{next_id}"
+                next_id += 1
+                if wire_key not in used and wire_key not in internal_by_wire:
+                    break
+        wire_by_internal[key] = wire_key
+        internal_by_wire[wire_key] = key
+    return wire_by_internal, internal_by_wire
 
 
 def _is_untranslated_candidate(
@@ -634,7 +730,11 @@ class BatchLlmEngine(TranslationEngine):
 
         # === ОБРАБОТКА ОБЫЧНЫХ СТРОК (≤20 маркеров) — стандартный путь ===
         if normal_keys:
-            payload = {key: items[key].masked for key in normal_keys}
+            wire_by_internal, internal_by_wire = _wire_key_map(normal_keys)
+            payload = {
+                wire_by_internal[key]: items[key].masked
+                for key in normal_keys
+            }
             prompt = build_translation_prompt(
                 payload,
                 target_lang["name"],
@@ -648,7 +748,13 @@ class BatchLlmEngine(TranslationEngine):
                 content = self._call_api(prompt, self.max_tokens)
                 if not content:
                     return all_failed + normal_keys
-                translated = parse_llm_json_response(content)
+                wire_translated = parse_llm_json_response(content)
+                # Accept old cached/model responses, but never expose
+                # structured adapter locators in a new request.
+                translated = {
+                    internal_by_wire.get(key, key): value
+                    for key, value in wire_translated.items()
+                }
                 suspicious_duplicates = _suspicious_duplicate_keys(
                     normal_keys, translated, items
                 )

@@ -1,8 +1,11 @@
-﻿import json
+﻿import hashlib
+import inspect
+import json
 import os
 import shutil
 import threading
 import unicodedata
+from mineai import __version__
 from mineai.constants import CACHE_FILE_AI, CACHE_FILE_STD, LANGUAGES
 from mineai.io_utils import atomic_write_text
 from mineai.language_validation import has_long_untranslated_english_fragment
@@ -15,8 +18,32 @@ from mineai.text_processing import (
 
 _IDENTITY_PREFIX = "__mineai_identity__:"
 _CACHE_VERSION_KEY = "__mineai_ai_cache_validation_version__"
-_CACHE_VALIDATION_VERSION = "31"
 _LANGUAGE_BY_API = {item["api"]: item for item in LANGUAGES.values()}
+
+
+def _cache_validation_version() -> str:
+    """Derive the cache marker from this release and the validator source."""
+    try:
+        validator_source = inspect.getsource(polish_translation)
+        validator_signature = str(inspect.signature(polish_translation))
+    except (OSError, TypeError):
+        code = getattr(polish_translation, "__code__", None)
+        if code is not None:
+            validator_source = repr(
+                (code.co_code.hex(), code.co_consts, code.co_names)
+            )
+        else:
+            validator_source = (
+                f"{polish_translation.__module__}."
+                f"{polish_translation.__qualname__}"
+            )
+        validator_signature = str(inspect.signature(polish_translation))
+    payload = f"{__version__}\n{validator_signature}\n{validator_source}"
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    return f"{__version__}|{digest}"
+
+
+_CACHE_VALIDATION_VERSION = _cache_validation_version()
 
 
 def _normalize_cache_source(text: str) -> str:

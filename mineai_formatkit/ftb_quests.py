@@ -389,7 +389,25 @@ class FtbQuestsLangAdapter:
         try:
             value = json.loads(token)
         except json.JSONDecodeError as exc:
-            raise ValidationError(f"Invalid quoted SNBT string for {key!r}") from exc
+            # FTB Quests uses Mojang SNBT escaping, which permits escaping
+            # characters JSON does not (notably ``\ `` in long descriptions).
+            # Decode that narrow fallback without relaxing structure checks.
+            if len(token) < 2 or token[0] != '"' or token[-1] != '"':
+                raise ValidationError(f"Invalid quoted SNBT string for {key!r}") from exc
+            raw = token[1:-1]
+            chars: list[str] = []
+            index = 0
+            escapes = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\"}
+            while index < len(raw):
+                char = raw[index]
+                if char != "\\" or index + 1 >= len(raw):
+                    chars.append(char)
+                    index += 1
+                    continue
+                escaped = raw[index + 1]
+                chars.append(escapes.get(escaped, escaped))
+                index += 2
+            value = "".join(chars)
         if not isinstance(value, str):
             raise ValidationError(f"FTB Quests string for {key!r} did not decode to text")
         return value
@@ -649,7 +667,7 @@ class FtbQuestsLangAdapter:
 
 
 _CHAPTER_PATH_RE = re.compile(
-    r"(^|/)ftbquests/quests/chapters/[^/]+\.snbt$",
+    r"(^|/)ftbquests/quests/(?:chapters|reward_tables)/[^/]+\.snbt$",
     re.IGNORECASE,
 )
 _DIRECT_CHAPTER_KEYS = {
@@ -676,10 +694,10 @@ class FtbQuestsChapterFingerprint:
 
 
 class FtbQuestsChapterAdapter(FtbQuestsLangAdapter):
-    """Extract rare direct player-visible text from FTB Quests chapter SNBT.
+    """Extract rare direct player-visible text from FTB Quests SNBT.
 
     Normal quest titles/subtitles/descriptions belong in ``lang/en_us.snbt``.
-    Chapter files are therefore treated as technical documents except for a
+    Chapter and reward-table files are therefore treated as technical documents except for a
     very small allow-list observed in the real FTB Evolution corpus:
 
     * ``feedback_message`` and ``description`` string fields;
@@ -856,11 +874,9 @@ class FtbQuestsChapterAdapter(FtbQuestsLangAdapter):
             occurrence = counts[key]
             counts[key] += 1
 
-            if key == "minecraft:lore":
-                if value_index >= len(text) or text[value_index] != "[":
-                    raise ValidationError("minecraft:lore in FTB Quests must be a string list")
+            if key in {"description", "minecraft:lore"} and value_index < len(text) and text[value_index] == "[":
                 values, spans, end = self._parse_string_list(
-                    text, value_index, "minecraft:lore"
+                    text, value_index, key
                 )
                 fields.append(
                     _ChapterField(key, tuple(values), tuple(spans), occurrence)

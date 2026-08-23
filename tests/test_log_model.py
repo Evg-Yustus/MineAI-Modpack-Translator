@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from mineai import __version__
 from mineai.gui_qt import log_model
 
 entry_from_message = log_model.entry_from_message
@@ -45,12 +46,12 @@ class TranslationMessageSplitTests(unittest.TestCase):
 
     def test_session_header_identifies_version_and_start_time(self):
         header = log_model.format_session_header(
-            "10.0.0 - BETAv39",
+            __version__,
             datetime(2026, 8, 15, 13, 14, 15),
         )
 
         self.assertIn("NEW SESSION", header)
-        self.assertIn("10.0.0 - BETAv39", header)
+        self.assertIn(__version__, header)
         self.assertIn("2026-08-15 13:14:15", header)
 
 

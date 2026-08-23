@@ -1,7 +1,7 @@
 ﻿# 🌍 MineAI Translator (The Ultimate Modpack Localizer)
 
-[![Beta40](https://img.shields.io/badge/version-10.0.0--BETAv40-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
-[![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml)
+[![Beta41](https://img.shields.io/badge/version-10.0.0--BETAv41-7c3aed)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases/latest)
+[![Tests](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml/badge.svg?branch=beta41)](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/actions/workflows/tests.yml?query=branch%3Abeta41)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![License review](https://img.shields.io/badge/FormatKit_license-review_required-orange.svg)](#license)
 
@@ -27,7 +27,7 @@ The program features a modern Graphical User Interface (GUI). You don't need to 
 You don't need to install Python or mess with code! You can download the ready-to-use application.
 
 1. Go to the [Releases](https://github.com/Evg-Yustus/MineAI-Modpack-Translator-TEST/releases) tab on the right.
-2. Download the latest **`MineAI_Translator_Beta40.exe`** file.
+2. Download the latest **`MineAI_Translator_Beta41.exe`** file.
 3. Place it in a convenient folder and run it with a double click.
 
 *(For advanced users and developers, instructions on running from source code are at the bottom of the page).*
@@ -96,6 +96,13 @@ To avoid translating the same lines twice, the program uses a **dual independent
 * `ai_cache.json` — High-quality AI translation cache (KoboldCPP/OpenRouter).
 *If the program closes unexpectedly, you won't lose a single translated line.*
 
+`dictionary.json` and `glossary.json` are user-editable files generated beside
+the application on first launch. They are deliberately not embedded in the
+EXE, so an update does not overwrite custom terminology. FTB Quests chapter
+and reward files are read-only inputs: only visible title/description text is
+written to a language overlay; item IDs, counts, dependencies, rewards and
+other gameplay links are never sent to a translator or rewritten.
+
 ---
 
 ## 🤖 AI Configuration (Artificial Intelligence)
@@ -161,23 +168,20 @@ mineai/
 If you modified the code and want to build your own executable without a console window, simply run the provided batch file:
 `build.bat`
 
-The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta40.exe`.
+The compiled standalone app will appear in the `dist/` folder as `MineAI_Translator_Beta41.exe`.
 
 ### FormatKit SDK
 
-Beta40 keeps the proven semantic-unit pipeline from Beta39 and adds a
-quest-localization dependency resolver. FTB Quest references such as
-`{atm9.quest.example}` are resolved to their real KubeJS, resource-pack, or mod
-locale entries. Only referenced values are translated and written to the
-generated resource pack; source quest files and English KubeJS dictionaries
-remain unchanged. Beta40 also keeps the
-timestamped session journal, lossless full-line display, confirmation before
-clearing the visible journal, and automatic discovery of loaded LM Studio LLMs.
-The embedded architecture combines the
-standalone `mineai_formatkit` SDK. Existing GuideME and IE manuals keep their
-contextual translation units and must also pass the second SDK reconstruction.
-Minecraft locale JSON, Patchouli and Oracle Index use the standalone SDK
-directly, preserving source serialization while exposing only visible text.
+Beta41 keeps the semantic-unit pipeline and quest-locale resolver from Beta40.
+FTB Quest references such as `{atm9.quest.example}` are resolved to their real
+KubeJS, resource-pack, or mod locale entries. Chapter/reward SNBT files are
+read-only inputs: item IDs, counts, dependencies, rewards and links are never
+translated or rewritten; only visible text is emitted to the language overlay.
+FormatKit JSON locators such as `json:/pages/0/title` are opaque transport
+details and are hidden from both LLM JSON payloads and Google requests.
+The embedded architecture combines the standalone `mineai_formatkit` SDK.
+GuideME, IE, Patchouli, Modonomicon and locale JSON preserve their source
+serialization while exposing only visible text nodes.
 The upstream API and corpus notes are kept in
 [`docs/upstream-formatkit`](docs/upstream-formatkit).
 
@@ -259,20 +263,17 @@ API-токен нужен только тогда, когда авторизац
 
 Для сборки собственного `.exe` файла без окна консоли используйте готовый батник:
 `build.bat`
-(Результат появится в папке `dist/MineAI_Translator_Beta40.exe`).
+(Результат появится в папке `dist/MineAI_Translator_Beta41.exe`).
 
 ### SDK FormatKit
 
-Beta40 сохраняет объединённую архитектуру Beta39 и добавляет резолвер связанных
-словарей квестов. Ссылки FTB Quests вида `{atm9.quest.example}` находятся в
-реальных словарях KubeJS, ресурс-паков или модов; переводятся только используемые
-значения, а результат сохраняется в создаваемом ресурспаке без изменения
-английских файлов сборки. Также сохранён журнал сеансов с
-временем, настоящее отображение полных строк, подтверждение очистки журнала и
-автоматический выбор загруженных моделей LM Studio. Проект
-объединяет смысловые блоки с отдельным SDK
-`mineai_formatkit`. GuideME и IE проходят двойную структурную проверку, а
-locale JSON, Patchouli и Oracle Index разбираются новым SDK напрямую без
+Beta41 сохраняет семантический конвейер и резолвер словарей Beta40. Файлы
+глав и таблиц наград FTB Quests читаются только для анализа: ID предметов,
+количество, зависимости, награды и ссылки не переводятся и не переписываются,
+а видимый текст сохраняется в языковом overlay. Локаторы FormatKit вида
+`json:/pages/0/title` скрываются перед отправкой в LLM и Google. Проект
+объединяет смысловые блоки с отдельным SDK `mineai_formatkit`; GuideME, IE,
+Patchouli, Modonomicon и locale JSON проходят структурную проверку без
 передачи разметки переводчику. API и результаты корпусного аудита находятся в
 [`docs/upstream-formatkit`](docs/upstream-formatkit).
 

@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 import zipfile
 
-from mineai.cache import TranslationCache
+from mineai.cache import TranslationCache, _CACHE_VALIDATION_VERSION
 from mineai.io_utils import atomic_write_bytes
 from mineai.output.pack_writer import PackWriter
 
@@ -89,7 +89,7 @@ class AtomicWriteTests(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 self.assertEqual(
                     json.load(handle)["__mineai_ai_cache_validation_version__"],
-                    "31",
+                    _CACHE_VALIDATION_VERSION,
                 )
 
     def test_failed_replace_preserves_original_and_removes_temp_file(self):
