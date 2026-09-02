@@ -41,6 +41,8 @@ class LooseJsonProcessor:
         mode: str,
         output_mode: str,
         pack_writer: PackWriter | None,
+        selected_units: dict[str, frozenset[str]] | None = None,
+        retranslate_selected: bool = False,
     ) -> str | None:
         if not file_path.casefold().endswith(".json"):
             return self._process_document(
@@ -50,6 +52,8 @@ class LooseJsonProcessor:
                 mode=mode,
                 output_mode=output_mode,
                 pack_writer=pack_writer,
+                selected_units=selected_units,
+                retranslate_selected=retranslate_selected,
             )
 
         tr_internal = loose_pack_target_path(
@@ -59,6 +63,10 @@ class LooseJsonProcessor:
         )
         tr_disk = loose_target_disk_path(file_path, target_lang["file"])
         is_book = loose_file_scope(file_path) == "books"
+        logical_path = os.path.relpath(file_path, mc_dir).replace("\\", "/")
+        selected_ids = _selected_unit_ids(selected_units, logical_path)
+        if selected_units is not None and selected_ids is None:
+            return None
         ensure_distinct_paths(file_path, tr_disk)
 
         with open(file_path, encoding="utf-8") as f:
@@ -76,6 +84,25 @@ class LooseJsonProcessor:
                 target_lang,
             )
             total = len(source_map)
+            if selected_ids is not None:
+                pending = {
+                    key: value
+                    for key, value in (
+                        {
+                            **pending,
+                            **(
+                                {
+                                    key: value
+                                    for key, value in source_map.items()
+                                    if retranslate_selected and key in selected_ids
+                                }
+                                if retranslate_selected
+                                else {}
+                            ),
+                        }
+                    ).items()
+                    if key in selected_ids
+                }
         else:
             pending = collect_lang_keys_to_translate(
                 en_data,
@@ -84,6 +111,12 @@ class LooseJsonProcessor:
                 target_lang["regex"],
             )
             total = count_translatable_lang_entries(en_data)
+            if selected_ids is not None:
+                pending = {
+                    key: value
+                    for key, value in pending.items()
+                    if key in selected_ids
+                }
         label = "Словарь: " + os.path.basename(os.path.dirname(os.path.dirname(file_path)))
 
         if mode == "skip" and skip_threshold_reached(total, len(pending)):
@@ -145,6 +178,8 @@ class LooseJsonProcessor:
         mode: str,
         output_mode: str,
         pack_writer: PackWriter | None,
+        selected_units: dict[str, frozenset[str]] | None = None,
+        retranslate_selected: bool = False,
     ) -> str | None:
         with open(file_path, encoding="utf-8-sig") as source_handle:
             source_text = source_handle.read()
@@ -157,6 +192,9 @@ class LooseJsonProcessor:
             target_lang["file"],
         )
         logical_path = os.path.relpath(file_path, mc_dir).replace("\\", "/")
+        selected_ids = _selected_unit_ids(selected_units, logical_path)
+        if selected_units is not None and selected_ids is None:
+            return None
         target_hint = tr_internal or os.path.relpath(
             tr_disk,
             mc_dir,
@@ -191,6 +229,14 @@ class LooseJsonProcessor:
                     "yellow",
                 )
 
+        if selected_ids is not None:
+            pending_ids = set(pending_ids).intersection(selected_ids)
+            if retranslate_selected:
+                pending_ids.update(
+                    unit.id
+                    for unit in active_plan.units
+                    if unit.id in selected_ids
+                )
         pending = {
             unit.id: unit.payload
             for unit in active_plan.units
@@ -265,3 +311,16 @@ class LooseJsonProcessor:
         except FormatValidationError as exc:
             return f"FormatKit: {exc}"
         return None
+
+
+def _selected_unit_ids(
+    selected_units: dict[str, frozenset[str]] | None,
+    logical_path: str,
+) -> frozenset[str] | None:
+    if selected_units is None:
+        return None
+    normalized = logical_path.replace("\\", "/")
+    for path, unit_ids in selected_units.items():
+        if path.replace("\\", "/").casefold() == normalized.casefold():
+            return frozenset(unit_ids)
+    return frozenset()

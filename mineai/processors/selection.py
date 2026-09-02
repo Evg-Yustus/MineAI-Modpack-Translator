@@ -190,6 +190,9 @@ class SnbtSelection:
     total_translatable: int
     pending: list[str]
     document: StructuredDocument | None = None
+    # Existing non-empty values that failed the structural/content validator.
+    # They must be retried even when the ordinary skip threshold is reached.
+    repair_pending: tuple[str, ...] = ()
 
 
 def collect_snbt_selection(
@@ -199,6 +202,8 @@ def collect_snbt_selection(
     target_regex: str,
     *,
     allowed_entry_ids: set[str] | frozenset[str] | None = None,
+    allowed_unit_ids: set[str] | frozenset[str] | None = None,
+    target_lang: dict | None = None,
 ) -> SnbtSelection:
     from mineai.processors.snbt_extract import build_snbt_document
 
@@ -206,14 +211,41 @@ def collect_snbt_selection(
         original_content,
         current_content,
         allowed_entry_ids=allowed_entry_ids,
+        allowed_unit_ids=allowed_unit_ids,
+    )
+    needs_repair = (
+        (lambda source, existing: translation_needs_repair(
+            source,
+            existing,
+            target_lang,
+        ))
+        if target_lang is not None
+        else None
     )
     pending = document.pending_source_values(
         mode,
         target_regex,
         same_latin_script=False,
+        needs_repair=needs_repair,
+    )
+    repair_pending = (
+        tuple(
+            dict.fromkeys(
+                node.source
+                for node in document.nodes
+                if node.translatable
+                and node.existing.strip()
+                and node.existing.strip() != node.source.strip()
+                and needs_repair is not None
+                and needs_repair(node.source, node.existing)
+            )
+        )
+        if needs_repair is not None
+        else ()
     )
     return SnbtSelection(
         total_translatable=len(document.unique_translatable_sources()),
         pending=list(pending),
         document=document,
+        repair_pending=repair_pending,
     )

@@ -32,7 +32,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='MineAI_Translator_Beta42',
+    name='MineAI_Translator_Beta43',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -20,3 +20,9 @@ class MigrationSignals(QObject):
 
 class LmStudioSignals(QObject):
     finished = pyqtSignal(bool, object, str)
+
+
+class ProviderSignals(QObject):
+    """Background model probe signal shared by local providers."""
+
+    finished = pyqtSignal(bool, object, str)

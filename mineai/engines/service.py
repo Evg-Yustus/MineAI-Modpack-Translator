@@ -10,15 +10,20 @@ from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
 from mineai.engines.deepl import DeepLEngine
 from mineai.engines.google import GoogleEngine
 from mineai.engines.kobold import KoboldEngine
+from mineai.engines.llama import LlamaEngine
 from mineai.engines.lmstudio import LmStudioEngine
+from mineai.engines.ollama import OllamaEngine
 from mineai.engines.openrouter import OpenRouterEngine
 from mineai.formats.rich_text import (
     contains_unsafe_formatting,
     parse_rich_text,
 )
 from mineai.language_validation import (
+    delimiter_counts_need_repair,
+    formatting_boundaries_need_repair,
     has_long_untranslated_english_fragment,
     has_untranslated_leading_article,
+    has_untranslated_source_words,
     requires_target_script_marker,
     uses_same_latin_script,
 )
@@ -210,6 +215,10 @@ def _validate_candidate(
         return False, "изменён порядок защищённых фрагментов", False
     if structural_fragments(candidate) != structural_fragments(item.original):
         return False, "изменён порядок или набор кодов форматирования", False
+    if formatting_boundaries_need_repair(item.original, candidate):
+        return False, "изменены пробелы вокруг кодов форматирования", False
+    if delimiter_counts_need_repair(item.original, candidate):
+        return False, "изменено количество структурных разделителей", False
     if PLACEHOLDER_PATTERN.findall(candidate) != PLACEHOLDER_PATTERN.findall(
         item.original
     ):
@@ -221,6 +230,8 @@ def _validate_candidate(
         return False, "оставлен английский артикль в начале строки", False
     if has_long_untranslated_english_fragment(_candidate_masked, target_lang):
         return False, "оставлен длинный английский фрагмент", False
+    if has_untranslated_source_words(item.masked, _candidate_masked, target_lang):
+        return False, "оставлены английские слова исходной строки", False
     same_as_source = candidate.strip() == item.original.strip()
     if same_as_source:
         if target_lang["api"] == "en":
@@ -315,6 +326,28 @@ class TranslationService:
                 base_url=self.config.get("LMSTUDIO", "base_url"),
                 api_key=self.config.get("LMSTUDIO", "api_key"),
                 model=self.config.get("LMSTUDIO", "model"),
+                mode=self.ai_mode,
+                context=context,
+                prompt_type=prompt_type,
+                retries=retries,
+                session=self._ai_http_session,
+            )
+        if self.ai_provider == "ollama":
+            return OllamaEngine(
+                base_url=self.config.get("OLLAMA", "base_url"),
+                api_key=self.config.get("OLLAMA", "api_key"),
+                model=self.config.get("OLLAMA", "model"),
+                mode=self.ai_mode,
+                context=context,
+                prompt_type=prompt_type,
+                retries=retries,
+                session=self._ai_http_session,
+            )
+        if self.ai_provider == "llama":
+            return LlamaEngine(
+                base_url=self.config.get("LLAMA", "base_url"),
+                api_key=self.config.get("LLAMA", "api_key"),
+                model=self.config.get("LLAMA", "model"),
                 mode=self.ai_mode,
                 context=context,
                 prompt_type=prompt_type,
@@ -718,6 +751,55 @@ class TranslationService:
                 format_failed,
                 retry_result,
                 "строгий повтор структуры",
+            )
+
+        # A model can return valid syntax and a target-language sentence while
+        # silently copying one visible English term (for example ``Blaze`` or
+        # ``Deployer``). Retry that content explicitly before Google fallback.
+        residual_failed = {
+            key: item
+            for key, item in pending.items()
+            if key not in accepted
+            and any(
+                marker in failure_reasons.get(key, "")
+                for marker in (
+                    "оставлены английские слова",
+                    "оставлен длинный английский фрагмент",
+                    "нет символов целевого языка",
+                    "оставлен английский артикль",
+                )
+            )
+        }
+        if residual_failed and callbacks.should_run():
+            callbacks.on_log(
+                f"🔁 Строгий повтор текста: {len(residual_failed)} строк",
+                "cyan",
+            )
+            retry_context = (
+                f"{context}\n"
+                "The previous answer left visible source-language words. "
+                "Translate every ordinary English word and proper name in the "
+                "visible text. Keep only protected game terms and placeholders "
+                "unchanged; never leave an English word inside an otherwise "
+                "translated sentence."
+            ).strip()
+            retry_engine = (
+                GoogleEngine(
+                    workers=self.config.getint("GENERAL", "google_workers", 5),
+                    mode="single",
+                )
+                if self.engine_name == "google"
+                else self._build_engine(retry_context, prompt_type)
+            )
+            retry_result = retry_engine.translate_batch(
+                residual_failed,
+                target_lang,
+                callbacks,
+            )
+            apply_engine_result(
+                residual_failed,
+                retry_result,
+                "строгий повтор текста",
             )
 
         failed_pending = {k: v for k, v in pending.items() if k not in accepted}

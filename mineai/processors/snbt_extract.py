@@ -1,7 +1,10 @@
 ﻿import re
 
+from bisect import bisect_right
+
 from mineai.formats.document import DocumentPath, StructuredDocument, TextNode
 from mineai.text_processing import (
+    is_nontranslatable_value,
     is_technical_term,
     is_translation_key,
     looks_like_source_language,
@@ -31,13 +34,39 @@ ARRAY_FIELDS = (
     "chapter_subtitle",
 )
 KEY_START = r'(?<![\w])(?:"|)'
+_ENTRY_ID_PATTERN = re.compile(
+    r'(?:\bid\s*:\s*"([0-9a-f]{16})"|[a-z_]+\.([0-9a-f]{16})\.)',
+    re.IGNORECASE,
+)
 
 
-def _entry_id_before(content: str, position: int) -> str | None:
-    line_start = content.rfind("\n", 0, position) + 1
-    prefix = content[line_start:position]
-    match = re.search(r"[a-z_]+\.([0-9a-f]{16})\.[^\s.]*$", prefix, re.IGNORECASE)
-    return match.group(1).upper() if match else None
+def _entry_id_index(content: str) -> tuple[tuple[int, str], ...]:
+    return tuple(
+        (
+            match.start(),
+            (match.group(1) or match.group(2)).upper(),
+        )
+        for match in _ENTRY_ID_PATTERN.finditer(content)
+    )
+
+
+def _entry_id_before(
+    content: str,
+    position: int,
+    id_positions: tuple[tuple[int, str], ...] | None = None,
+) -> str | None:
+    """Return the nearest quest/object ID before a text slot.
+
+    FTB Quests chapter files use ``id: \"<hex>\"`` on a line of its own,
+    while language catalogs use ``quest.<hex>.<field>``.  Looking only at the
+    current line (the old behaviour) assigned multiline chapter fields to
+    ``@root`` and made unit-level preview selection impossible.
+    """
+    id_positions = id_positions or _entry_id_index(content)
+    if not id_positions:
+        return None
+    index = bisect_right(id_positions, (position, "\uffff")) - 1
+    return id_positions[index][1] if index >= 0 else None
 
 
 def _escape_snbt_value(value: str) -> str:
@@ -69,6 +98,7 @@ def _escape_snbt_value(value: str) -> str:
 def _is_selected_text(value: str, skip_translated_regex: str | None) -> bool:
     return bool(
         value.strip()
+        and not is_nontranslatable_value(value)
         and not is_translation_key(value)
         and looks_like_source_language(value)
         and not (
@@ -80,6 +110,7 @@ def _is_selected_text(value: str, skip_translated_regex: str | None) -> bool:
 
 def _iter_all_snbt_slots(content: str):
     """Yield stable source spans for every supported textual SNBT field."""
+    id_positions = _entry_id_index(content)
     ordinals: dict[tuple[str, str, str], int] = {}
     field_pattern = "|".join(SINGLE_FIELDS)
     single_pattern = re.compile(
@@ -88,7 +119,7 @@ def _iter_all_snbt_slots(content: str):
         re.IGNORECASE,
     )
     for match in single_pattern.finditer(content):
-        entry_id = _entry_id_before(content, match.start()) or "@root"
+        entry_id = _entry_id_before(content, match.start(), id_positions) or "@root"
         field = match.group("field").casefold()
         ordinal_key = (entry_id, "single", field)
         ordinal = ordinals.get(ordinal_key, 0)
@@ -103,7 +134,7 @@ def _iter_all_snbt_slots(content: str):
         re.IGNORECASE,
     )
     for block in array_pattern.finditer(content):
-        entry_id = _entry_id_before(content, block.start()) or "@root"
+        entry_id = _entry_id_before(content, block.start(), id_positions) or "@root"
         field = block.group("field").casefold()
         ordinal_key = (entry_id, "array", field)
         for string_match in re.finditer(SNBT_STRING_RE, block.group("body")):
@@ -120,6 +151,7 @@ def build_snbt_document(
     target_content: str = "",
     *,
     allowed_entry_ids: set[str] | frozenset[str] | None = None,
+    allowed_unit_ids: set[str] | frozenset[str] | None = None,
 ) -> StructuredDocument:
     """Parse SNBT into the common AST and retain an exact source skeleton."""
     target_by_path = {
@@ -130,7 +162,10 @@ def build_snbt_document(
     }
     nodes: list[TextNode] = []
     for path, value, start, end, entry_id in _iter_all_snbt_slots(source_content):
-        selected = allowed_entry_ids is None or entry_id in allowed_entry_ids
+        selected = (
+            (allowed_entry_ids is None or entry_id in allowed_entry_ids)
+            and (allowed_unit_ids is None or path.encode() in allowed_unit_ids)
+        )
         nodes.append(
             TextNode(
                 key=path.encode(),
@@ -186,6 +221,7 @@ def build_snbt_baseline_document(
     current_content: str,
     *,
     allowed_entry_ids: set[str] | frozenset[str] | None = None,
+    allowed_unit_ids: set[str] | frozenset[str] | None = None,
 ) -> StructuredDocument:
     """Use current structure while retaining old source values as a baseline."""
     baseline_by_path = {
@@ -197,7 +233,10 @@ def build_snbt_baseline_document(
     nodes: list[TextNode] = []
     for path, current, start, end, entry_id in _iter_all_snbt_slots(current_content):
         source = baseline_by_path.get(path, current)
-        selected = allowed_entry_ids is None or entry_id in allowed_entry_ids
+        selected = (
+            (allowed_entry_ids is None or entry_id in allowed_entry_ids)
+            and (allowed_unit_ids is None or path.encode() in allowed_unit_ids)
+        )
         nodes.append(
             TextNode(
                 key=path.encode(),
@@ -259,14 +298,21 @@ def apply_snbt_translations(
     content: str,
     mapping: dict[str, str],
     *,
+    target_content: str = "",
     allowed_entry_ids: set[str] | frozenset[str] | None = None,
+    allowed_unit_ids: set[str] | frozenset[str] | None = None,
 ) -> str:
     document = build_snbt_document(
         content,
+        target_content,
         allowed_entry_ids=allowed_entry_ids,
+        allowed_unit_ids=allowed_unit_ids,
     )
     translations = {
-        node.key: mapping.get(node.source, node.source)
+        node.key: mapping.get(
+            node.source,
+            node.existing if node.existing else node.source,
+        )
         for node in document.nodes
         if node.translatable
     }

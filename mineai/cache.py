@@ -8,7 +8,10 @@ import unicodedata
 from mineai import __version__
 from mineai.constants import CACHE_FILE_AI, CACHE_FILE_STD, LANGUAGES
 from mineai.io_utils import atomic_write_text
-from mineai.language_validation import has_long_untranslated_english_fragment
+from mineai.language_validation import (
+    has_long_untranslated_english_fragment,
+    translation_needs_repair,
+)
 from mineai.text_processing import (
     is_technical_term,
     is_translation_key,
@@ -162,6 +165,19 @@ class TranslationCache:
                 if (
                     language is not None
                     and has_long_untranslated_english_fragment(value, language)
+                ):
+                    self._backup_before_auto_repair()
+                    del self._data[key]
+                    changes += 1
+                    continue
+                if (
+                    language is not None
+                    and api_code != "en"
+                    and translation_needs_repair(
+                        source_payload,
+                        value,
+                        language,
+                    )
                 ):
                     self._backup_before_auto_repair()
                     del self._data[key]

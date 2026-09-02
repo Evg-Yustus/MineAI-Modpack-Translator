@@ -1,4 +1,4 @@
-import os
+﻿import os
 import threading
 import time
 import traceback
@@ -20,6 +20,7 @@ from mineai.processors.discovery import (
     discover_heracles_files,
     discover_jar_files,
     discover_loose_lang_files,
+    discover_puffish_skills_files,
     discover_snbt_files,
 )
 from mineai.processors.estimator import StringEstimator
@@ -28,6 +29,7 @@ from mineai.processors.book_paths import MarkdownBookLocator
 from mineai.processors.bq_json import BQProcessor
 from mineai.processors.heracles import HeraclesProcessor
 from mineai.processors.loose_json import LooseJsonProcessor
+from mineai.processors.puffish_skills import PuffishSkillsProcessor
 from mineai.processors.quest_locales import (
     QuestLocaleProcessor,
     build_quest_locale_plan,
@@ -48,13 +50,15 @@ class TranslationOptions:
     google_mode: str
     ai_mode: str
     ai_batch: int
-    ai_provider: str  # local | lmstudio | openrouter
+    ai_provider: str  # local | lmstudio | ollama | llama | openrouter
     process_mode: str  # append | skip | force
     translate_mods: bool
     translate_books: bool
     translate_quests: bool
     selected_items: frozenset[str] | None = None
     cache_recovery_mode: bool = False
+    preview_units: dict[str, frozenset[str]] | None = None
+    retranslate_selected: bool = False
 
 
 class TranslationJob:
@@ -167,11 +171,11 @@ class TranslationJob:
         lang = LANGUAGES[options.language_label]
         if options.cache_recovery_mode and (
             options.engine != "ai"
-            or options.ai_provider not in {"local", "lmstudio"}
+            or options.ai_provider not in {"local", "lmstudio", "ollama", "llama"}
         ):
             self.on_log(
                 "❌ Для восстановления кэша выберите локальный ИИ "
-                "(KoboldCPP или LM Studio).",
+                "(KoboldCPP, LM Studio, Ollama или Llama).",
                 "red",
             )
             return
@@ -205,6 +209,20 @@ class TranslationJob:
                     return
                 if not self.config.get("LMSTUDIO", "model").strip():
                     self.on_log("❌ Выберите модель LM Studio в настройках!", "red")
+                    return
+            elif options.ai_provider == "ollama":
+                if not self.config.get("OLLAMA", "base_url").strip():
+                    self.on_log("❌ Укажите адрес Ollama в настройках!", "red")
+                    return
+                if not self.config.get("OLLAMA", "model").strip():
+                    self.on_log("❌ Выберите модель Ollama в настройках!", "red")
+                    return
+            elif options.ai_provider == "llama":
+                if not self.config.get("LLAMA", "base_url").strip():
+                    self.on_log("❌ Укажите адрес Llama в настройках!", "red")
+                    return
+                if not self.config.get("LLAMA", "model").strip():
+                    self.on_log("❌ Выберите модель Llama в настройках!", "red")
                     return
             elif not self.config.get("AI", "model_path").strip():
                 self.on_log("❌ Выберите модель .gguf в настройках!", "red")
@@ -272,6 +290,11 @@ class TranslationJob:
             if options.translate_quests
             else []
         )
+        puffish_files = (
+            discover_puffish_skills_files(options.mc_dir)
+            if options.translate_quests
+            else []
+        )
         if options.selected_items is not None:
             snbt = [
                 path
@@ -288,6 +311,11 @@ class TranslationJob:
                 for path in heracles_files
                 if target_is_selected(options.selected_items, path, "quests")
             ]
+            puffish_files = [
+                path
+                for path in puffish_files
+                if target_is_selected(options.selected_items, path, "quests")
+            ]
 
         quest_locale_plan = build_quest_locale_plan(
             options.mc_dir,
@@ -300,10 +328,21 @@ class TranslationJob:
             for dependency in (
                 quest_locale_plan.dependencies if quest_locale_plan else ()
             )
-            if target_is_selected(
-                options.selected_items,
-                dependency.source_path,
-                "quests",
+            if (
+                options.preview_units is None
+                and target_is_selected(
+                    options.selected_items,
+                    dependency.source_path,
+                    "quests",
+                )
+            )
+            or (
+                options.preview_units is not None
+                and _preview_path_selected(
+                    options.preview_units,
+                    dependency.source_path,
+                    options.mc_dir,
+                )
             )
         ]
         if quest_locale_plan and quest_locale_plan.missing_keys:
@@ -320,6 +359,7 @@ class TranslationJob:
             and not snbt
             and not bq_files
             and not heracles_files
+            and not puffish_files
             and not quest_locale_dependencies
         ):
             self.on_log("❌ Нечего переводить!", "red")
@@ -342,6 +382,8 @@ class TranslationJob:
             heracles_files=heracles_files,
             book_locator=shared_book_locator,
             quest_locale_plan=quest_locale_plan,
+            puffish_files=puffish_files,
+            mc_dir=options.mc_dir,
         )
         self.state.set_total_strings(estimated_count)
         self.on_log(f"   Найдено: {estimated_count}", "cyan")
@@ -359,6 +401,12 @@ class TranslationJob:
         elif options.engine == "ai" and options.ai_provider == "lmstudio":
             model = self.config.get("LMSTUDIO", "model")
             self.on_log(f"🖥️ LM Studio: {model}", "cyan")
+        elif options.engine == "ai" and options.ai_provider == "ollama":
+            model = self.config.get("OLLAMA", "model")
+            self.on_log(f"🦙 Ollama: {model}", "cyan")
+        elif options.engine == "ai" and options.ai_provider == "llama":
+            model = self.config.get("LLAMA", "model")
+            self.on_log(f"🦙 Llama: {model}", "cyan")
 
         pack_writer: PackWriter | None = None
         failed = False
@@ -373,6 +421,7 @@ class TranslationJob:
             + len(snbt)
             + len(bq_files)
             + len(heracles_files)
+            + len(puffish_files)
             + len(quest_locale_dependencies)
         )
         done = 0
@@ -398,7 +447,11 @@ class TranslationJob:
                 )
 
         try:
-            if options.output_mode == "resourcepack" or quest_locale_dependencies:
+            if (
+                options.output_mode == "resourcepack"
+                or quest_locale_dependencies
+                or puffish_files
+            ):
                 pack_writer = PackWriter(
                     options.mc_dir,
                     options.pack_name,
@@ -432,6 +485,7 @@ class TranslationJob:
             snbt_proc = SnbtProcessor(service, self.state, callbacks)
             bq_proc = BQProcessor(service, self.state, callbacks)
             heracles_proc = HeraclesProcessor(service, self.state, callbacks)
+            puffish_proc = PuffishSkillsProcessor(service, self.state, callbacks)
 
             self._reset_progress_status_throttle()
             self.state.begin_progress()
@@ -461,6 +515,8 @@ class TranslationJob:
                         translate_books=translate_books,
                         pack_writer=pack_writer,
                         book_locator=shared_book_locator,
+                        selected_units=options.preview_units,
+                        retranslate_selected=options.retranslate_selected,
                     ),
                 )
 
@@ -484,6 +540,8 @@ class TranslationJob:
                         mode=process_mode,
                         output_mode=options.output_mode,
                         pack_writer=pack_writer,
+                        selected_units=options.preview_units,
+                        retranslate_selected=options.retranslate_selected,
                     ),
                 )
 
@@ -518,6 +576,8 @@ class TranslationJob:
                         target_lang=lang,
                         mode=process_mode,
                         selected_items=options.selected_items,
+                        selected_units=options.preview_units,
+                        retranslate_selected=options.retranslate_selected,
                     ),
                 )
 
@@ -573,6 +633,27 @@ class TranslationJob:
                         mode=process_mode,
                     ),
                 )
+
+            for path in puffish_files:
+                if not self.state.should_run():
+                    break
+                self.state.wait_if_paused()
+                if not self.state.should_run():
+                    break
+                process_file(
+                    path,
+                    "Навыки",
+                    lambda path=path: puffish_proc.process(
+                        path,
+                        options.mc_dir,
+                        target_lang=lang,
+                        mode=process_mode,
+                        output_mode=options.output_mode,
+                        pack_writer=pack_writer,
+                        selected_units=options.preview_units,
+                        retranslate_selected=options.retranslate_selected,
+                    ),
+                )
         except Exception:
             failed = True
             processing_failed = True
@@ -619,7 +700,6 @@ class TranslationJob:
                         f"{traceback.format_exc()}",
                         "red",
                     )
-
         if failed:
             self.on_status("Ошибка перевода", 1.0)
         elif not self.state.should_run():
@@ -686,3 +766,17 @@ class TranslationJob:
     def stop(self) -> None:
         self.state.stop()
         self.ai_launcher.terminate()
+
+
+def _preview_path_selected(
+    selected_units: dict[str, frozenset[str]],
+    path: str,
+    mc_dir: str,
+) -> bool:
+    absolute = os.path.abspath(path).replace("\\", "/").casefold()
+    relative = os.path.relpath(path, mc_dir).replace("\\", "/").casefold()
+    for candidate in selected_units:
+        normalized = candidate.replace("\\", "/").lstrip("/").casefold()
+        if normalized in {absolute, relative} or absolute.endswith("/" + normalized):
+            return True
+    return False

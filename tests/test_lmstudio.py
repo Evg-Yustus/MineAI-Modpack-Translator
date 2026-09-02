@@ -244,6 +244,52 @@ class LmStudioApiTests(unittest.TestCase):
         self.assertFalse(first_options["json"]["stream"])
         self.assertNotIn("Authorization", first_options["headers"])
 
+    def test_truncated_completion_is_rejected_before_translation_validation(self):
+        engine_type, _, _ = _lmstudio_components(self)
+        session = _Session(
+            post_payload={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": '["Перевод"'},
+                    }
+                ]
+            }
+        )
+        engine = engine_type(
+            "http://localhost:1234/v1",
+            "qwen/model",
+            session=session,
+        )
+        logs = []
+
+        result = engine._request(
+            'Rules\n\nDATA:\n["Long source text"]',
+            4096,
+            on_log=lambda message, tag: logs.append((message, tag)),
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(any("max_tokens" in message for message, _ in logs))
+
+    def test_clean_array_request_uses_a_bounded_output_budget(self):
+        engine_type, _, _ = _lmstudio_components(self)
+        session = _Session()
+        engine = engine_type(
+            "http://localhost:1234/v1",
+            "qwen/model",
+            session=session,
+        )
+
+        engine._request(
+            'Rules\n\nDATA:\n["Short title", "Another short title"]',
+            4096,
+        )
+
+        sent_limit = session.post_calls[0][1]["json"]["max_tokens"]
+        self.assertGreaterEqual(sent_limit, 256)
+        self.assertLess(sent_limit, 4096)
+
     def test_batch_prompt_uses_json_schema_but_plain_repair_does_not(self):
         engine_type, _, _ = _lmstudio_components(self)
         session = _Session()

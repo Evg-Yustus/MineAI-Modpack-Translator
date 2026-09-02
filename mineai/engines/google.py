@@ -1,4 +1,5 @@
 ﻿import re
+import html
 import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,29 +17,126 @@ from mineai.text_processing import (
 
 class GoogleEngine(TranslationEngine):
     API_URL = "https://translate.googleapis.com/translate_a/single"
+    # The unofficial GTX endpoint is shared by several Google frontends.  A
+    # temporary quota limit on one host must not abort the whole translation.
+    API_URLS = (
+        API_URL,
+        "https://translate.google.com/translate_a/single",
+    )
+    # The two GTX JSON hosts can be rate-limited independently from Google's
+    # lightweight mobile page. It is a real Google frontend, not a third
+    # unofficial JSON protocol, so it is useful as a bounded last resort.
+    MOBILE_API_URL = "https://translate.google.com/m"
+    RATE_LIMIT_COOLDOWN = 60.0
+    _MOBILE_RESULT_PATTERN = re.compile(
+        r'<div\s+class=["\']result-container["\']\s*>(.*?)</div>',
+        re.IGNORECASE | re.DOTALL,
+    )
     BATCH_SEP = " |~| "
 
     def __init__(self, workers: int = 5, mode: str = "single") -> None:
         self.workers = max(1, min(workers, 10))
         self.mode = mode
+        self._limited_until: dict[str, float] = {}
+        self._limited_logged: set[str] = set()
+
+    @staticmethod
+    def _retry_delay(attempt: int, exc: Exception) -> float:
+        """Respect Google's Retry-After header before applying backoff."""
+        response = getattr(exc, "response", None)
+        header = getattr(response, "headers", {}).get("Retry-After")
+        if header is not None:
+            try:
+                return min(30.0, max(0.0, float(header)))
+            except (TypeError, ValueError):
+                pass
+        return min(12.0, max(1.0, 2.0 * (2 ** (attempt - 1))))
+
+    @classmethod
+    def _parse_mobile_payload(cls, body: str) -> str:
+        match = cls._MOBILE_RESULT_PATTERN.search(body)
+        if match is None:
+            raise ValueError("Google mobile response has no result container")
+        value = re.sub(r"<br\s*/?>", "\n", match.group(1), flags=re.IGNORECASE)
+        value = re.sub(r"<[^>]+>", "", value)
+        return html.unescape(value).strip()
+
+    def _endpoint_is_limited(self, endpoint: str) -> bool:
+        return self._limited_until.get(endpoint, 0.0) > time.monotonic()
+
+    def _mark_endpoint_limited(self, endpoint: str, exc: Exception, on_log) -> None:
+        response = getattr(exc, "response", None)
+        retry_after = getattr(response, "headers", {}).get("Retry-After")
+        try:
+            cooldown = max(self.RATE_LIMIT_COOLDOWN, float(retry_after))
+        except (TypeError, ValueError):
+            cooldown = self.RATE_LIMIT_COOLDOWN
+        self._limited_until[endpoint] = time.monotonic() + cooldown
+        if on_log and endpoint not in self._limited_logged:
+            self._limited_logged.add(endpoint)
+            on_log(
+                "⚠️ Google: адрес временно ограничен (429); "
+                "переключение без повторной отправки",
+                "yellow",
+            )
 
     def _request(self, text: str, api_code: str, timeout: int = 10, on_log=None, should_continue=None) -> str | None:
-        try:
-            response = request_with_retry(
-                lambda: requests.get(
-                    self.API_URL,
-                    params={"client": "gtx", "sl": "en", "tl": api_code, "dt": "t", "q": text},
-                    timeout=timeout,
-                ),
-                operation="Google Translate",
-                on_log=on_log,
-                should_continue=should_continue,
-            )
-            return "".join(part[0] for part in response.json()[0] if part[0])
-        except RequestCancelled:
-            raise
-        except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
-            return None
+        endpoints = (*self.API_URLS, self.MOBILE_API_URL)
+        for endpoint_index, endpoint in enumerate(endpoints):
+            if self._endpoint_is_limited(endpoint):
+                continue
+            try:
+                response = request_with_retry(
+                    lambda endpoint=endpoint: requests.get(
+                        endpoint,
+                        params=(
+                            {"sl": "en", "tl": api_code, "hl": "en-US", "q": text}
+                            if endpoint == self.MOBILE_API_URL
+                            else {
+                                "client": "gtx",
+                                "sl": "en",
+                                "tl": api_code,
+                                "dt": "t",
+                                "q": text,
+                            }
+                        ),
+                        headers={
+                            "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 Chrome/124.0 Safari/537.36"
+                            )
+                        },
+                        timeout=timeout,
+                    ),
+                    operation="Google Translate",
+                    delay_func=self._retry_delay,
+                    on_log=on_log,
+                    should_continue=should_continue,
+                    retry_429=False,
+                )
+                if endpoint == self.MOBILE_API_URL:
+                    return self._parse_mobile_payload(response.text)
+                payload = response.json()
+                return "".join(part[0] for part in payload[0] if part and part[0])
+            except RequestCancelled:
+                raise
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 429:
+                    self._mark_endpoint_limited(endpoint, exc, on_log)
+                if status in {429, 500, 502, 503, 504} and endpoint_index + 1 < len(endpoints):
+                    if on_log:
+                        on_log(
+                            "⚠️ Google: переход к следующему доступному адресу",
+                            "yellow",
+                        )
+                    continue
+                return None
+            except (requests.RequestException, KeyError, IndexError, ValueError, TypeError):
+                if endpoint_index + 1 < len(endpoints):
+                    continue
+                return None
+        return None
 
     def _finalize(self, raw: str, item: EngineItem) -> str:
         text = unmask_translation(raw, item.mapping)

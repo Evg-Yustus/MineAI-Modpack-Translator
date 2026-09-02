@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import re
 import zipfile
@@ -25,6 +25,10 @@ from mineai.processors.selection import (
     skip_threshold_reached,
 )
 from mineai.processors.loose_paths import loose_target_disk_path
+from mineai.processors.puffish_skills import (
+    count_skill_units,
+    count_translated_skill_units,
+)
 from mineai.processors.quest_groups import collect_quest_groups
 from mineai.processors.quest_locales import QuestLocalePlan
 from mineai.processors.snbt import (
@@ -65,6 +69,8 @@ class StringEstimator:
         heracles_files: list[str] | None = None,
         book_locator: MarkdownBookLocator | None = None,
         quest_locale_plan: QuestLocalePlan | None = None,
+        puffish_files: list[str] | None = None,
+        mc_dir: str | None = None,
     ) -> int:
         total = 0
         target_file = f"{target_lang['file']}.json"
@@ -166,6 +172,29 @@ class StringEstimator:
                     mode,
                     target_lang,
                 )
+
+            for path in puffish_files or []:
+                if not self.state.should_run():
+                    return total
+                self.state.wait_if_paused()
+                if not target_is_selected(selected_items, path, "quests"):
+                    continue
+                source_total = count_skill_units(path)
+                if mode == "force" or not mc_dir:
+                    pending = source_total
+                else:
+                    translated = count_translated_skill_units(
+                        path,
+                        mc_dir,
+                        target_lang,
+                    )
+                    pending = max(0, source_total - translated)
+                if mode == "skip" and skip_threshold_reached(
+                    source_total,
+                    pending,
+                ):
+                    continue
+                total += pending
 
         return total
 
@@ -748,6 +777,7 @@ class StringEstimator:
             target_regex,
             same_latin_script=uses_same_latin_script(language),
             allowed_entry_ids=allowed_entry_ids,
+            target_lang=language,
         )
         if mode == "skip" and skip_threshold_reached(
             selection.total_translatable,

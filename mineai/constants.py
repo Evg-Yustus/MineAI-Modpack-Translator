@@ -7,6 +7,8 @@ KOBOLD_MODELS_URL = "http://localhost:5001/v1/models"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "google/gemma-2-9b-it:free"
 LMSTUDIO_BASE_URL = "http://localhost:1234/v1"
+OLLAMA_BASE_URL = "http://localhost:11434/api"
+LLAMA_BASE_URL = "http://127.0.0.1:8080/v1"
 
 KEYS_TO_TRANSLATE = frozenset({
     "name", "title", "text", "description", "subtitle", "label", "hover_text", "link_text",
@@ -40,6 +42,10 @@ IGNORE_TERMS = [
     "Apotheosis", "Allthemodium", "Botania", "Mekanism", "Powah", "Create",
     "Mystical", "Hexerei", "Malum", "Occultism", "Pneumaticraft", "Paxel",
     "Warden", "Allay", "Sniffer",
+    # Add-on/mod names and UI labels that are proper names, not prose.
+    "Farmer's Delight", "Farmer’s Delight", "Aquatic Ambitions", "Deep Dark",
+    "Kruidnoten", "FTB Teams", "Quest Book", "Discord",
+    "ME Advanced Pattern Provider", "RPM", "SU", "HW", "WW1", "Shift",
 ]
 IGNORE_TERMS.sort(key=len, reverse=True)
 

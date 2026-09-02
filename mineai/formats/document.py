@@ -101,6 +101,7 @@ class StructuredDocument:
         target_regex: str,
         *,
         same_latin_script: bool,
+        needs_repair: Callable[[str, str], bool] | None = None,
         nodes: Iterable[TextNode] | None = None,
     ) -> tuple[str, ...]:
         selected_nodes = tuple(nodes) if nodes is not None else self.nodes
@@ -116,6 +117,10 @@ class StructuredDocument:
                     or (
                         not same_latin_script
                         and not re.search(target_regex, node.existing)
+                    )
+                    or (
+                        needs_repair is not None
+                        and needs_repair(node.source, node.existing)
                     )
                 )
             )

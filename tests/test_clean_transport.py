@@ -95,6 +95,52 @@ class CleanTransportTests(unittest.TestCase):
         )
         self.assertEqual(len(prompts), 1)
 
+    def test_unchanged_standalone_english_article_is_removed(self):
+        source = "The &6Empty Burner"
+        masked, mapping = mask_protected_fragments(source)
+        item = EngineItem("title", source, masked, mapping)
+
+        def call_api(prompt: str, _limit: int) -> str:
+            payload = json.loads(prompt.split("DATA:\n", 1)[1])
+            self.assertEqual(payload, ["The", "Empty Burner"])
+            # Small local models often leave a standalone article unchanged;
+            # it must not block the rest of the clean document transport.
+            return json.dumps(["The", "Пустая горелка"], ensure_ascii=False)
+
+        engine = BatchLlmEngine(call_api=call_api)
+        result = engine.translate_batch({item.key: item}, TARGET_LANG, _callbacks())
+
+        self.assertEqual(result[item.key], "&6Пустая горелка")
+
+    def test_status_effect_sentence_keeps_numeric_fragments_in_one_translation_unit(self):
+        source = (
+            "Foods originating from Jungle biomes will provide you with "
+            "Haste II for 2 minutes."
+        )
+        masked, mapping = mask_protected_fragments(source)
+        item = EngineItem("entry", source, masked, mapping)
+        payloads: list[list[str]] = []
+
+        def call_api(prompt: str, _limit: int) -> str:
+            payload = json.loads(prompt.split("DATA:\n", 1)[1])
+            payloads.append(payload)
+            self.assertEqual(len(payload), 1)
+            self.assertNotIn("2", payload[0])
+            self.assertIn("[#", payload[0])
+            return json.dumps(
+                ["Еда из биомов джунглей даёт Ускорение [#1#] на [#0#] минуты."],
+                ensure_ascii=False,
+            )
+
+        engine = BatchLlmEngine(call_api=call_api)
+        result = engine.translate_batch({item.key: item}, TARGET_LANG, _callbacks())
+
+        self.assertEqual(
+            result[item.key],
+            "Еда из биомов джунглей даёт Ускорение II на 2 минуты.",
+        )
+        self.assertEqual(len(payloads), 1)
+
     def test_invalid_clean_response_is_rejected(self):
         self.assertFalse(response_is_clean("Перевод [#0#]"))
         self.assertFalse(response_is_clean("Перевод 12x"))
@@ -124,6 +170,10 @@ class CleanTransportTests(unittest.TestCase):
             ,
             ["один", "два"],
         )
+
+    def test_array_parser_rejects_repeated_bracket_garbage_after_payload(self):
+        with self.assertRaises(ValueError):
+            parse_llm_array_response('["один", "два"] ] ] ] ]')
 
 
 if __name__ == "__main__":

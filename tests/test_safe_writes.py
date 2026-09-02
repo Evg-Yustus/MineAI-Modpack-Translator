@@ -69,6 +69,25 @@ class AtomicWriteTests(unittest.TestCase):
             reloaded = TranslationCache(path)
             self.assertEqual(reloaded.get("ru", "Hello"), ("Привет", False))
 
+    def test_ai_cache_repairs_changed_numbers_and_format_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "ai_cache.json")
+            source = "Use &6Energy&r: 256 E/t"
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "ru_" + source: "Используйте &6 Энергию&r: 512 E/t"
+                    },
+                    handle,
+                    ensure_ascii=False,
+                )
+
+            cache = TranslationCache(path)
+
+            self.assertGreaterEqual(cache.polish_changes, 1)
+            self.assertEqual(cache.get("ru", source), (None, False))
+            self.assertTrue(os.path.exists(path + ".pre-auto-repair"))
+
     def test_beta33_ai_cache_is_upgraded_without_losing_valid_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "ai_cache.json")

@@ -2,9 +2,9 @@
 
 on:
   push:
-    branches: [main, beta, beta41, beta42]
+    branches: [main, beta, beta41, beta42, beta43, beta44, beta45]
   pull_request:
-    branches: [main, beta, beta41, beta42]
+    branches: [main, beta, beta41, beta42, beta43, beta44, beta45]
   workflow_dispatch:
 
 permissions:
@@ -55,16 +55,16 @@ jobs:
       - name: Verify packaged EXE
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist\MineAI_Translator_Beta42.exe")) {
-            throw "dist\MineAI_Translator_Beta42.exe was not created"
+          if (-not (Test-Path "dist\MineAI_Translator_Beta45.exe")) {
+            throw "dist\MineAI_Translator_Beta45.exe was not created"
           }
-          $size = (Get-Item "dist\MineAI_Translator_Beta42.exe").Length
+          $size = (Get-Item "dist\MineAI_Translator_Beta45.exe").Length
           if ($size -lt 30000000) {
             throw "Packaged EXE is unexpectedly small: $size bytes"
           }
           Write-Host "Packaged EXE size $size bytes"
           $psi = [System.Diagnostics.ProcessStartInfo]::new()
-          $psi.FileName = (Resolve-Path "dist\MineAI_Translator_Beta42.exe").Path
+          $psi.FileName = (Resolve-Path "dist\MineAI_Translator_Beta45.exe").Path
           $psi.WorkingDirectory = $env:RUNNER_TEMP
           $psi.UseShellExecute = $false
           $psi.CreateNoWindow = $true
@@ -87,5 +87,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MineAI-Translator-Windows
-          path: dist/MineAI_Translator_Beta42.exe
+          path: dist/MineAI_Translator_Beta45.exe
           if-no-files-found: error

@@ -11,13 +11,17 @@ from mineai.analysis_items import (
     loose_file_scope,
 )
 from mineai.json_utils import load_lenient_json
-from mineai.language_validation import uses_same_latin_script
+from mineai.language_validation import (
+    translation_needs_repair,
+    uses_same_latin_script,
+)
 from mineai.mod_names import get_mod_name
 from mineai.processors.discovery import (
     discover_bq_files,
     discover_heracles_files,
     discover_jar_files,
     discover_loose_lang_files,
+    discover_puffish_skills_files,
     discover_snbt_files,
 )
 from mineai.processors.book_paths import (
@@ -38,6 +42,10 @@ from mineai.processors.quest_groups import collect_quest_groups
 from mineai.processors.quest_locales import build_quest_locale_plan
 from mineai.processors.snbt import get_snbt_target_path
 from mineai.processors.snbt_extract import merge_snbt_target
+from mineai.processors.puffish_skills import (
+    count_skill_units,
+    count_translated_skill_units,
+)
 from mineai.processors.translation_state import collect_snbt_selection_with_baseline
 from mineai.runtime.state import JobState
 from mineai.text_processing import (
@@ -220,7 +228,46 @@ class ModpackAnalyzer:
                     f"{len(quest_locale_plan.missing_keys)} ({preview})",
                     "yellow",
                 )
-                        
+
+        # Puffish Skills keeps its visible node text in datapack JSON, next
+        # to the immutable graph (connections, coordinates and rewards).
+        # Treat it as quest/progression content, not as a normal locale file.
+        puffish_files = (
+            discover_puffish_skills_files(mc_dir)
+            if translate_quests
+            else []
+        )
+        for index, path in enumerate(puffish_files):
+            if not self.state.should_run():
+                break
+            self.state.wait_if_paused()
+            on_status(
+                f"Анализ: навыки {os.path.basename(path)}...",
+                index / max(len(puffish_files), 1),
+            )
+            total = count_skill_units(path)
+            if not total:
+                continue
+            translated = count_translated_skill_units(
+                path,
+                mc_dir,
+                target_lang,
+            )
+            self._emit_result(
+                on_row,
+                on_item,
+                path=path,
+                scope="quests",
+                icon="🧠",
+                name=os.path.relpath(path, mc_dir),
+                kind="Квесты · навыки Puffish Skills",
+                translated=translated,
+                total=total,
+                percent=int(translated / total * 100),
+            )
+            total_en += total
+            total_tr += translated
+
         for index, path in enumerate(snbt_files):
             if not self.state.should_run():
                 break
@@ -884,6 +931,7 @@ class ModpackAnalyzer:
             "append",
             target_regex,
             same_latin_script=uses_same_latin_script(language),
+            target_lang=language,
         )
         en_c = selection.total_translatable
         tr_c = max(0, en_c - len(selection.pending))
@@ -925,6 +973,13 @@ class ModpackAnalyzer:
                         "append",
                         target_regex,
                         same_latin_script=uses_same_latin_script(language),
+                        needs_repair=(
+                            lambda source, existing: translation_needs_repair(
+                                source,
+                                existing,
+                                language,
+                            )
+                        ),
                         nodes=group_nodes,
                     )
                     group_translated = max(0, len(group_sources) - len(group_pending))

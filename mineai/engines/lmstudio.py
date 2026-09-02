@@ -51,6 +51,39 @@ def _translation_response_format(prompt: str) -> dict | None:
     }
 
 
+def _bounded_output_tokens(prompt: str, requested: int) -> int:
+    """Budget only enough output for the requested JSON payload.
+
+    LM Studio accepts a generous ``max_tokens`` value, but some local models
+    continue emitting repeated brackets after completing the array until that
+    limit is reached.  Estimating from the actual DATA keeps normal responses
+    short and leaves the caller's explicit lower limit intact.
+    """
+
+    requested = max(1, int(requested))
+    marker = "\nDATA:\n"
+    if marker not in prompt:
+        return requested
+    try:
+        data = json.loads(prompt.rsplit(marker, 1)[1])
+    except (json.JSONDecodeError, TypeError):
+        return requested
+    if isinstance(data, list):
+        values = data
+    elif isinstance(data, dict):
+        values = list(data.values())
+    else:
+        return requested
+    if not values or not all(isinstance(value, str) for value in values):
+        return requested
+
+    source_chars = sum(len(value) for value in values)
+    # Russian output can be longer than English.  Include JSON punctuation and
+    # a small safety margin, but never allow a short batch to use a 4k budget.
+    estimate = int((source_chars * 2.4 + len(values) * 24 + 128) / 3.5) + 1
+    return min(requested, max(256, estimate))
+
+
 def normalize_lmstudio_base_url(base_url: str) -> str:
     value = (base_url or "").strip().rstrip("/") or LMSTUDIO_BASE_URL
     if value.endswith("/chat/completions"):
@@ -198,12 +231,13 @@ class LmStudioEngine(BatchLlmEngine):
 
     def _request(self, prompt: str, max_tokens: int, on_log=None) -> str | None:
         active_log = on_log or self._on_log
+        effective_max_tokens = _bounded_output_tokens(prompt, max_tokens)
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
             "repeat_penalty": 1.0,
-            "max_tokens": max_tokens,
+            "max_tokens": effective_max_tokens,
             "stream": False,
         }
         response_format = _translation_response_format(prompt)
@@ -229,7 +263,18 @@ class LmStudioEngine(BatchLlmEngine):
             return None
 
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            response_payload = response.json()
+            choice = response_payload["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            if finish_reason in {"length", "max_tokens"}:
+                if active_log:
+                    active_log(
+                        "⚠️ LM Studio: ответ обрезан по max_tokens; пакет "
+                        "будет повторён меньшими частями",
+                        "yellow",
+                    )
+                return None
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             logger.error("LM Studio invalid JSON: %s", exc)
             if active_log:

@@ -69,6 +69,8 @@ class JarProcessor:
         translate_books: bool,
         pack_writer: PackWriter | None,
         book_locator: MarkdownBookLocator | None = None,
+        selected_units: dict[str, frozenset[str]] | None = None,
+        retranslate_selected: bool = False,
     ) -> None:
         if not translate_mods and not translate_books:
             return
@@ -133,6 +135,12 @@ class JarProcessor:
                         if not self.state.should_run():
                             break
                         fl = item.filename.lower()
+                        selected_unit_ids = _selected_unit_ids(
+                            selected_units,
+                            item.filename,
+                        )
+                        if selected_units is not None and selected_unit_ids is None:
+                            continue
 
                         if output_mode == "inplace" and zout:
                             if (
@@ -190,6 +198,8 @@ class JarProcessor:
                                 legacy_lang_target,
                                 prompt_type="mods",
                                 content_label="Интерфейс LANG",
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
                         elif translate_mods and is_lang:
                             modified |= self._process_lang_entry(
@@ -204,6 +214,8 @@ class JarProcessor:
                                 pack_writer,
                                 mod_name,
                                 written_inplace,
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
                         elif (
                             companion_lang_prefixes or companion_lang_keys
@@ -222,6 +234,8 @@ class JarProcessor:
                             written_inplace,
                             companion_lang_prefixes,
                             companion_lang_keys,
+                            allowed_unit_ids=selected_unit_ids,
+                            retranslate_selected=retranslate_selected,
                         )
                         elif translate_books and is_modonomicon:
                             modified |= self._process_book_md(
@@ -238,6 +252,8 @@ class JarProcessor:
                                 item.filename,
                                 content_label="Книга Modonomicon",
                                 copy_when_empty=False,
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
                         elif (
                             translate_books
@@ -263,6 +279,8 @@ class JarProcessor:
                                 written_inplace,
                                 upstream_target,
                                 content_label="Книга Patchouli",
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
                         elif (
                             translate_books
@@ -286,6 +304,8 @@ class JarProcessor:
                                 written_inplace,
                                 upstream_target,
                                 content_label="Книга Oracle Index",
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
                         elif translate_books and is_book_json:
                             modified |= self._process_book_json(
@@ -299,6 +319,8 @@ class JarProcessor:
                                 pack_writer,
                                 mod_name,
                                 written_inplace,
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
                         elif translate_books and is_book_md:
                             modified |= self._process_book_md(
@@ -313,6 +335,8 @@ class JarProcessor:
                                 mod_name,
                                 written_inplace,
                                 markdown_target,
+                                allowed_unit_ids=selected_unit_ids,
+                                retranslate_selected=retranslate_selected,
                             )
 
                     if output_mode == "inplace" and zout:
@@ -346,7 +370,6 @@ class JarProcessor:
                 except OSError:
                     pass
         return None
-
     @staticmethod
     def _validate_inplace_archive(path: str) -> None:
         with zipfile.ZipFile(path, "r") as archive:
@@ -359,6 +382,7 @@ class JarProcessor:
     def _process_lang_entry(
         self, zin, zout, item, locale_files, target_file, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace,
+        *, allowed_unit_ids=None, retranslate_selected=False,
     ) -> bool:
         tr_path = minecraft_lang_json_target_path(
             item.filename,
@@ -387,6 +411,8 @@ class JarProcessor:
                 pack_writer,
                 mod_name,
                 written_inplace,
+                allowed_unit_ids=allowed_unit_ids,
+                retranslate_selected=retranslate_selected,
             )
         return self._process_book_md(
             zin,
@@ -402,11 +428,14 @@ class JarProcessor:
             tr_path,
             prompt_type="mods",
             content_label="Интерфейс JSON",
+            allowed_unit_ids=allowed_unit_ids,
+            retranslate_selected=retranslate_selected,
         )
 
     def _process_lang_entry_legacy(
         self, zin, zout, item, locale_files, target_file, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace,
+        *, allowed_unit_ids=None, retranslate_selected=False,
     ) -> bool:
         tr_path = re.sub(
             r"en_us\.json$",
@@ -433,6 +462,20 @@ class JarProcessor:
             mode,
             target_lang["regex"],
         )
+        if allowed_unit_ids is not None:
+            pending = {
+                key: value
+                for key, value in pending.items()
+                if key in allowed_unit_ids
+            }
+            if retranslate_selected:
+                pending.update(
+                    {
+                        key: value
+                        for key, value in en_data.items()
+                        if key in allowed_unit_ids and isinstance(value, str)
+                    }
+                )
         total_translatable = count_translatable_lang_entries(en_data)
         if total_translatable == 0:
             return False
@@ -526,6 +569,7 @@ class JarProcessor:
     def _process_book_json(
         self, zin, zout, item, locale_files, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace,
+        *, allowed_unit_ids=None, retranslate_selected=False,
     ) -> bool:
         tr_path = re.sub(
             r"/en_us/",
@@ -555,6 +599,20 @@ class JarProcessor:
         total_translatable = len(source_map)
         if total_translatable == 0:
             return False
+        if allowed_unit_ids is not None:
+            pending = {
+                key: value
+                for key, value in pending.items()
+                if key in allowed_unit_ids
+            }
+            if retranslate_selected:
+                pending.update(
+                    {
+                        key: value
+                        for key, value in source_map.items()
+                        if key in allowed_unit_ids
+                    }
+                )
 
         if mode == "skip" and skip_threshold_reached(
             total_translatable,
@@ -610,7 +668,8 @@ class JarProcessor:
         self, zin, zout, item, locale_files, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace, target_path,
         *, prompt_type="books", content_label="Книга MD",
-        copy_when_empty=True,
+        copy_when_empty=True, allowed_unit_ids=None,
+        retranslate_selected=False,
     ) -> bool:
         try:
             en_text = zin.read(item).decode("utf-8-sig", errors="ignore")
@@ -668,6 +727,15 @@ class JarProcessor:
                 )
             else:
                 active_plan, pending_ids = merged
+
+        if allowed_unit_ids is not None:
+            pending_ids = set(pending_ids).intersection(allowed_unit_ids)
+            if retranslate_selected:
+                pending_ids.update(
+                    unit.id
+                    for unit in active_plan.units
+                    if unit.id in allowed_unit_ids
+                )
 
         pending = {
             unit.id: unit.payload
@@ -827,7 +895,8 @@ class JarProcessor:
     def _process_book_lang_metadata(
         self, zin, zout, item, locale_files, target_file, target_lang, mode,
         output_mode, pack_writer, mod_name, written_inplace, prefixes,
-        exact_keys=frozenset(),
+        exact_keys=frozenset(), *, allowed_unit_ids=None,
+        retranslate_selected=False,
     ) -> bool:
         tr_path = re.sub(
             r"en_us\.json$",
@@ -866,6 +935,20 @@ class JarProcessor:
             mode,
             target_lang["regex"],
         )
+        if allowed_unit_ids is not None:
+            pending = {
+                key: value
+                for key, value in pending.items()
+                if key in allowed_unit_ids
+            }
+            if retranslate_selected:
+                pending.update(
+                    {
+                        key: value
+                        for key, value in source.items()
+                        if key in allowed_unit_ids
+                    }
+                )
         merged = dict(existing)
         for key, value in existing_for_source.items():
             if value:
@@ -946,4 +1029,17 @@ class JarProcessor:
             )
         except FormatValidationError:
             return None
+
+
+def _selected_unit_ids(
+    selected_units: dict[str, frozenset[str]] | None,
+    logical_path: str,
+) -> frozenset[str] | None:
+    if selected_units is None:
+        return None
+    normalized = logical_path.replace("\\", "/")
+    for path, unit_ids in selected_units.items():
+        if path.replace("\\", "/").casefold() == normalized.casefold():
+            return frozenset(unit_ids)
+    return frozenset()
 

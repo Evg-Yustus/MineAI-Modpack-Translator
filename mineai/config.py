@@ -44,6 +44,16 @@ class ConfigManager:
             "api_key": "",
             "model": "",
         },
+        "OLLAMA": {
+            "base_url": "http://localhost:11434/api",
+            "api_key": "",
+            "model": "",
+        },
+        "LLAMA": {
+            "base_url": "http://127.0.0.1:8080/v1",
+            "api_key": "",
+            "model": "",
+        },
     }
 
     def __init__(self) -> None:

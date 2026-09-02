@@ -152,3 +152,45 @@ def discover_heracles_files(mc_dir: str) -> list[str]:
     if os.path.isfile(tutorial):
         result.append(tutorial)
     return sorted(result, key=lambda path: path.casefold())
+
+
+def discover_puffish_skills_files(mc_dir: str) -> list[str]:
+    """Find Puffish Skills JSON resources inside datapack data roots.
+
+    Paxi keeps pack sources below ``config/paxi/datapacks`` while vanilla
+    datapacks use ``datapacks``.  The adapter intentionally scans only these
+    known data roots (plus the equivalent KubeJS/OpenLoader roots) and never
+    walks live world saves or mod archives.
+    """
+    roots = (
+        "config/paxi/datapacks",
+        "datapacks",
+        "config/openloader/data",
+        "kubejs/data",
+    )
+    found: set[str] = set()
+    for relative_root in roots:
+        base = os.path.join(mc_dir, relative_root.replace("/", os.sep))
+        if not os.path.isdir(base):
+            continue
+        for current, directories, files in os.walk(base):
+            directories[:] = [
+                name
+                for name in directories
+                if name.casefold() not in {"saves", "mods", "resourcepacks"}
+            ]
+            normalized = current.replace("\\", "/")
+            parts = [part.casefold() for part in normalized.split("/")]
+            try:
+                data_index = parts.index("data")
+            except ValueError:
+                continue
+            if "puffish_skills" not in parts[data_index + 1 :]:
+                continue
+            for name in files:
+                if not name.casefold().endswith(".json"):
+                    continue
+                path = os.path.join(current, name)
+                if os.path.isfile(path):
+                    found.add(path)
+    return sorted(found, key=str.casefold)

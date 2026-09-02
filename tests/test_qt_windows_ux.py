@@ -9,10 +9,11 @@ try:
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication, QMessageBox, QToolButton
     from mineai.config import settings
-    from mineai.gui_qt.dialogs import SettingsDialog
+    from mineai.gui_qt.dialogs import PreviewDialog, SettingsDialog
     from mineai.gui_qt.log_model import entry_from_message
     from mineai.gui_qt.main_window import TranslatorQtWindow
     from mineai.gui_qt.widgets import ScrollSafeComboBox, ScrollSafeSpinBox
+    from mineai.preview import PreviewBuilder, PreviewDocument, PreviewInput, PreviewPage, PreviewReport
 except ImportError:
     Qt = None
     QApplication = None
@@ -20,10 +21,22 @@ except ImportError:
     QToolButton = None
     settings = None
     SettingsDialog = None
+    PreviewDialog = None
     entry_from_message = None
     TranslatorQtWindow = None
     ScrollSafeComboBox = None
     ScrollSafeSpinBox = None
+    PreviewBuilder = None
+    PreviewInput = None
+    PreviewDocument = None
+    PreviewPage = None
+    PreviewReport = None
+
+
+def _walk_tree(item):
+    yield item
+    for index in range(item.childCount()):
+        yield from _walk_tree(item.child(index))
 
 
 @unittest.skipIf(QApplication is None, "PyQt6 is not installed")
@@ -118,6 +131,184 @@ class WheelSafetyTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_preview_is_available_in_header_and_opens_game_view(self):
+        window = TranslatorQtWindow()
+        try:
+            self.assertTrue(hasattr(window, "preview_header_button"))
+            self.assertIn("В игре" if window._ui_language == "ru" else "In-game", window.preview_header_button.text())
+            self.assertTrue(window.preview_header_button.toolTip())
+        finally:
+            window.close()
+
+    def test_preview_selection_rows_show_text_instead_of_internal_unit_ids(self):
+        report = PreviewBuilder(target_regex=r"[А-Яа-яЁё]").build(
+            [
+                PreviewInput(
+                    logical_path="config/ftbquests/quests/chapters/chapter.snbt",
+                    source_text='{id: "AAAABBBBCCCCDDDD", title: "Quest"}',
+                    target_text='{id: "AAAABBBBCCCCDDDD", title: "Квест"}',
+                    kind="quest",
+                )
+            ]
+        )
+        dialog = PreviewDialog(report)
+        try:
+            visible = " ".join(
+                item.text(0)
+                for tree in dialog._selection_trees
+                for index in range(tree.topLevelItemCount())
+                for item in _walk_tree(tree.topLevelItem(index))
+            )
+            self.assertIn("Квест", visible)
+            self.assertNotIn("snbt/", visible)
+            self.assertNotIn("AAAABBBBCCCCDDDD", visible)
+        finally:
+            dialog.close()
+
+    def test_preview_graph_card_selects_quest_units_and_dialog_is_resizable(self):
+        source = '{quests: [{id: "AAAABBBBCCCCDDDD", title: "Quest", description: ["English"]}]}\n'
+        target = source.replace("Quest", "Квест").replace("English", "Описание")
+        report = PreviewBuilder(target_regex=r"[А-Яа-яЁё]").build(
+            [
+                PreviewInput(
+                    logical_path="config/ftbquests/quests/chapters/chapter.snbt",
+                    source_text=source,
+                    target_text=target,
+                    kind="quest",
+                )
+            ]
+        )
+        dialog = PreviewDialog(report)
+        try:
+            self.assertTrue(dialog.isSizeGripEnabled())
+            self.assertTrue(dialog._graph_views)
+            dialog._select_graph_node("AAAABBBBCCCCDDDD")
+            checked = [
+                item
+                for tree in dialog._selection_trees
+                for index in range(tree.topLevelItemCount())
+                for item in _walk_tree(tree.topLevelItem(index))
+                if item.childCount() == 0 and item.checkState(0) == Qt.CheckState.Checked
+            ]
+            self.assertTrue(checked)
+            quest_tree = dialog._selection_trees[1]
+            quest_row = next(
+                item
+                for index in range(quest_tree.topLevelItemCount())
+                for item in _walk_tree(quest_tree.topLevelItem(index))
+                if item.childCount() == 0
+            )
+            dialog._select_tree_item(quest_row, 0)
+            self.assertEqual(
+                dialog._graph_views[0].highlighted_node_id.casefold(),
+                "AAAABBBBCCCCDDDD".casefold(),
+            )
+            self.assertTrue(quest_row.isSelected())
+        finally:
+            dialog.close()
+
+    def test_preview_quest_graph_supports_zoom_out_and_fit(self):
+        source = '{quests: [{id: "AAAABBBBCCCCDDDD", title: "Quest"}]}\n'
+        target = source.replace("Quest", "Квест")
+        report = PreviewBuilder(target_regex=r"[А-Яа-яЁё]").build(
+            [
+                PreviewInput(
+                    logical_path="config/ftbquests/quests/chapters/chapter.snbt",
+                    source_text=source,
+                    target_text=target,
+                    kind="quest",
+                )
+            ]
+        )
+        dialog = PreviewDialog(report)
+        try:
+            graph = dialog._graph_views[0]
+            initial_scale = graph.transform().m11()
+            graph.zoom_out()
+            self.assertLess(graph.transform().m11(), initial_scale)
+            graph.fit_graph()
+            self.assertGreater(graph.zoom_level, 0.0)
+            self.assertLessEqual(graph.zoom_level, 1.0)
+        finally:
+            dialog.close()
+
+    def test_preview_quest_selection_highlights_direct_dependencies_and_wraps_cards(self):
+        long_title = "A quest title that is deliberately long enough to require multiple lines in the preview card"
+        source = (
+            '{quests: [{id: "AAAABBBBCCCCDDDD" title: "Selected"} '
+            f'{{id: "1111222233334444" title: "{long_title}" dependencies: ["AAAABBBBCCCCDDDD"]}}]}}\n'
+        )
+        target = source.replace("Selected", "Выбранный").replace(long_title, "Длинный заголовок квеста")
+        report = PreviewBuilder(target_regex=r"[А-Яа-яЁё]").build(
+            [
+                PreviewInput(
+                    logical_path="config/ftbquests/quests/chapters/chapter.snbt",
+                    source_text=source,
+                    target_text=target,
+                    kind="quest",
+                )
+            ]
+        )
+        dialog = PreviewDialog(report)
+        try:
+            graph = dialog._graph_views[0]
+            dialog._select_graph_node("1111222233334444")
+            self.assertEqual(
+                graph.highlighted_dependency_ids,
+                {"AAAABBBBCCCCDDDD"},
+            )
+            self.assertIn("AAAABBBBCCCCDDDD", graph._node_rects)
+            self.assertEqual(
+                graph._node_rects["AAAABBBBCCCCDDDD"].brush().color().name(),
+                "#9a6a2f",
+            )
+            self.assertTrue(graph._node_texts)
+            self.assertTrue(
+                all(len(text.toPlainText().splitlines()) <= 3 for text in graph._node_texts.values())
+            )
+        finally:
+            dialog.close()
+
+    def test_preview_books_have_chapter_page_navigation_and_original_toggle(self):
+        reports = PreviewReport(
+            documents=(
+                PreviewDocument(
+                    logical_path="assets/example/guide/en_us/chapter-one.md",
+                    kind="book",
+                    format="markdown-v2",
+                    pages=(
+                        PreviewPage(0, "Chapter One", "Original page one", "Первая страница", ("u1",)),
+                        PreviewPage(1, "Chapter One", "Original page two", "Вторая страница", ("u2",)),
+                    ),
+                ),
+                PreviewDocument(
+                    logical_path="assets/example/guide/en_us/chapter-two.md",
+                    kind="book",
+                    format="markdown-v2",
+                    pages=(PreviewPage(0, "Chapter Two", "Original page three", "Третья страница", ("u3",)),),
+                ),
+            ),
+            issues=(),
+        )
+        dialog = PreviewDialog(reports)
+        try:
+            self.assertEqual(dialog.book_chapter_combo.count(), 2)
+            self.assertEqual(dialog.book_page_label.text(), "Страница 1 / 2")
+            self.assertNotIn("Показать оригинал", dialog.books_view.toHtml())
+            self.assertIn("Первая страница", dialog.books_view.toPlainText())
+            self.assertEqual(dialog.book_original_button.text(), "Показать оригинал")
+
+            dialog.book_next_button.click()
+            self.assertEqual(dialog.book_page_label.text(), "Страница 2 / 2")
+            dialog.book_original_button.click()
+            self.assertEqual(dialog.book_original_button.text(), "Показать перевод")
+            self.assertIn("Original page two", dialog.books_view.toHtml())
+            self.assertIn("Оригинал как в игре", dialog.books_view.toHtml())
+            dialog.book_original_button.click()
+            self.assertIn("Вторая страница", dialog.books_view.toHtml())
+        finally:
+            dialog.close()
+
     def test_primary_translation_choices_are_restored_and_saved(self):
         original = {
             key: settings.get("GENERAL", key)
@@ -179,6 +370,22 @@ class WheelSafetyTests(unittest.TestCase):
             )
         finally:
             window.close()
+            settings.set("GENERAL", "cache_recovery_mode", previous)
+
+    def test_cache_recovery_keeps_native_local_providers(self):
+        previous = settings.get("GENERAL", "cache_recovery_mode")
+        settings.set("GENERAL", "cache_recovery_mode", False)
+        try:
+            for label, provider in (("Ollama", "ollama"), ("Llama", "llama")):
+                window = TranslatorQtWindow()
+                try:
+                    window.engine_combo.setCurrentText(label)
+                    window.cache_recovery_checkbox.setChecked(True)
+                    self.app.processEvents()
+                    self.assertEqual(window._translation_options().ai_provider, provider)
+                finally:
+                    window.close()
+        finally:
             settings.set("GENERAL", "cache_recovery_mode", previous)
 
     def test_log_toolbar_has_only_clear_and_export_actions(self):

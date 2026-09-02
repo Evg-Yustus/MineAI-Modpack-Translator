@@ -70,7 +70,94 @@ def _add_node(nodes: list[VisibleTextNode], value: str, start: int, end: int) ->
     )
 
 
-def extract_visible_nodes(masked: str) -> tuple[VisibleTextNode, ...]:
+def _is_numeric_protected_fragment(value: str) -> bool:
+    """Return whether a protected token is a number or a Roman level marker."""
+
+    value = value.strip()
+    return bool(
+        NUMERIC_FRAGMENT_PATTERN.fullmatch(value)
+        or re.fullmatch(r"(?i)[IVXLCDM]{1,8}", value)
+    )
+
+
+def numeric_placeholder_tokens(mapping: dict[str, str]) -> frozenset[str]:
+    """Return placeholders that represent values kept out of the LLM payload."""
+
+    return frozenset(
+        token
+        for token, fragment in mapping.items()
+        if _is_numeric_protected_fragment(fragment)
+    )
+
+
+def _coalesce_numeric_nodes(
+    masked: str,
+    nodes: list[VisibleTextNode],
+    numeric_tokens: frozenset[str],
+) -> list[VisibleTextNode]:
+    """Join prose split only by numeric/level placeholders.
+
+    A sentence such as ``Haste II for 2 minutes`` would otherwise become three
+    independent requests (``Haste``, ``for``, ``minutes``).  Translating those
+    pieces independently changes word order.  We keep the numeric placeholders
+    in one unit, so the model sees the sentence context while the original
+    values are still restored byte-for-byte afterwards.
+    """
+
+    if len(nodes) < 2 or not numeric_tokens:
+        return nodes
+
+    groups: list[list[VisibleTextNode]] = []
+    current: list[VisibleTextNode] = [nodes[0]]
+    protected_count = 0
+
+    def flush() -> None:
+        nonlocal current, protected_count
+        if protected_count >= 2:
+            first, last = current[0], current[-1]
+            groups.append(
+                [
+                    VisibleTextNode(
+                        start=first.start,
+                        end=last.end,
+                        leading=first.leading,
+                        trailing=last.trailing,
+                        text=masked[first.start:last.end].strip(),
+                    )
+                ]
+            )
+        else:
+            groups.append(current)
+        current = []
+        protected_count = 0
+
+    for node in nodes[1:]:
+        previous = current[-1]
+        gap = masked[previous.end : node.start]
+        placeholders = list(PLACEHOLDER_PATTERN.finditer(gap))
+        gap_without_tokens = PLACEHOLDER_PATTERN.sub("", gap)
+        only_numeric_tokens = bool(placeholders) and all(
+            match.group(0) in numeric_tokens for match in placeholders
+        ) and not gap_without_tokens.strip()
+        if only_numeric_tokens:
+            current.append(node)
+            protected_count += len(placeholders)
+            continue
+        flush()
+        current = [node]
+
+    if current:
+        flush()
+
+    flattened = [node for group in groups for node in group]
+    return flattened
+
+
+def extract_visible_nodes(
+    masked: str,
+    *,
+    coalesce_numeric: frozenset[str] | None = None,
+) -> tuple[VisibleTextNode, ...]:
     """Return visible prose spans while leaving protected syntax in place.
 
     The spans include placeholders produced by ``mask_protected_fragments``,
@@ -96,6 +183,8 @@ def extract_visible_nodes(masked: str) -> tuple[VisibleTextNode, ...]:
         _add_node(nodes, masked[cursor:start], cursor, start)
         cursor = end
     _add_node(nodes, masked[cursor:], cursor, len(masked))
+    if coalesce_numeric:
+        nodes = _coalesce_numeric_nodes(masked, nodes, coalesce_numeric)
     return tuple(nodes)
 
 
@@ -152,7 +241,16 @@ _TRANSPORT_SYNTAX_PATTERN = re.compile(
 )
 
 
-def response_is_clean(value: str) -> bool:
+def response_is_clean(
+    value: str,
+    *,
+    allowed_placeholders: frozenset[str] | set[str] | None = None,
+) -> bool:
     """Reject a model response that tries to reintroduce protected syntax."""
 
-    return bool(value) and not _TRANSPORT_SYNTAX_PATTERN.search(value)
+    if not value:
+        return False
+    check = value
+    for placeholder in allowed_placeholders or ():
+        check = check.replace(placeholder, "")
+    return not _TRANSPORT_SYNTAX_PATTERN.search(check)

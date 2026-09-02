@@ -1,7 +1,11 @@
-"""Tests for C1: spurious space removal after Minecraft format codes in unmask_translation."""
+﻿"""Tests for C1: spurious space removal after Minecraft format codes in unmask_translation."""
 import unittest
 
-from mineai.text_processing import mask_protected_fragments, unmask_translation
+from mineai.text_processing import (
+    mask_protected_fragments,
+    polish_translation,
+    unmask_translation,
+)
 
 
 class FormatCodeSpaceTests(unittest.TestCase):
@@ -30,7 +34,7 @@ class FormatCodeSpaceTests(unittest.TestCase):
         self.assertEqual(result, "&aГлава 1&r: &bНачало")
 
     def test_space_not_removed_when_next_is_also_space(self):
-        """'&a  Слово' (два пробела) — regex требует \S после пробела, поэтому первый пробел
+        """'&a  Слово' (два пробела) — regex требует \\S после пробела, поэтому первый пробел
         НЕ удаляется (следующий символ — ещё один пробел). Оба пробела остаются.
         Это безопасное поведение — двойные пробелы у AI крайне редки."""
         result = unmask_translation("&a  Слово", {})
@@ -85,6 +89,29 @@ class FormatCodeSpaceTests(unittest.TestCase):
             with self.subTest(code=ch):
                 result = unmask_translation(f"&{ch} Слово", {})
                 self.assertEqual(result, f"&{ch}Слово")
+
+    def test_polish_preserves_source_boundary_after_ampersand_code(self):
+        """&6Extras must become &6Дополнительно, without an invented space."""
+        result = polish_translation(
+            "&6Дополнительно",
+            boundary_source="&6Extras",
+        )
+        self.assertEqual(result, "&6Дополнительно")
+
+    def test_polish_keeps_intentional_source_space_after_code(self):
+        result = polish_translation(
+            "&6 Дополнительно",
+            boundary_source="&6 Extras",
+        )
+        self.assertEqual(result, "&6 Дополнительно")
+
+    def test_polish_preserves_adjacent_ampersand_style_codes(self):
+        """Adjacent colour/style codes remain adjacent to translated text."""
+        result = polish_translation(
+            "&d&lСкалк-мука",
+            boundary_source="&d&lSculk Flour",
+        )
+        self.assertEqual(result, "&d&lСкалк-мука")
 
 
 if __name__ == "__main__":

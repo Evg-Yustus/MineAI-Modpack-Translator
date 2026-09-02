@@ -1,4 +1,4 @@
-"""Extract translatable text from FTB Quests chapter/reward_table SNBT files.
+﻿"""Extract translatable text from FTB Quests chapter/reward_table SNBT files.
 
 FTB Quests loads translations from ``config/ftbquests/quests/lang/<locale>/``
 using ``TranslationManager``.  For each quest object it calls::
@@ -26,7 +26,11 @@ import re
 from typing import Iterator
 
 from mineai.io_utils import atomic_write_text
-from mineai.text_processing import is_technical_term, is_translation_key
+from mineai.text_processing import (
+    is_nontranslatable_value,
+    is_technical_term,
+    is_translation_key,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +133,8 @@ def _looks_translatable(value: str) -> bool:
     """Return True if the string looks like player-visible text to translate."""
     stripped = value.strip()
     if not stripped:
+        return False
+    if is_nontranslatable_value(stripped):
         return False
     if is_translation_key(stripped):
         return False
@@ -258,10 +264,12 @@ def extract_chapter_lang_entries(
             items = _parse_snbt_string_list(content, bracket_pos)
             if items is None:
                 continue
-            translatable = [v for v in items if _looks_translatable(v)]
-            if not translatable:
+            if not any(_looks_translatable(v) for v in items):
                 continue
-            entries[lang_key] = translatable
+            # Keep the complete list, including renderer macros and empty
+            # slots.  FTB Quests addresses description lines by index; compacting
+            # the list would move a page break/image onto a different line.
+            entries[lang_key] = items
 
     return entries
 

@@ -824,6 +824,38 @@ class TranslationServiceRegressionTests(unittest.TestCase):
         self.assertEqual(result, {"key": "Корректный русский перевод"})
         google.translate_batch.assert_called_once()
 
+    def test_residual_english_word_gets_strict_retry_before_google(self):
+        source = "A Blaze Burner is useful"
+
+        class ResidualEngine(TranslationEngine):
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def translate_batch(self, items, target_lang, callbacks):
+                self.calls += 1
+                key = next(iter(items))
+                return {
+                    key: (
+                        "Горелка Blaze полезна"
+                        if self.calls == 1
+                        else "Полезная горелка"
+                    )
+                }
+
+        engine = ResidualEngine()
+        result = _Service(
+            engine,
+            _MemoryCache(),
+            _Config(fallback_google=False),
+        ).translate_dict(
+            {"key": source},
+            TARGET_LANG,
+            _callbacks([]),
+        )
+
+        self.assertEqual(result, {"key": "Полезная горелка"})
+        self.assertEqual(engine.calls, 2)
+
     def test_format_validator_rejection_gets_strict_local_retry(self):
         calls = 0
 

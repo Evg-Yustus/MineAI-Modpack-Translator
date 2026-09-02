@@ -119,8 +119,17 @@ STRUCTURAL_FRAGMENT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
+_CASE_SENSITIVE_IGNORE_TERMS = frozenset({"Create", "Shift"})
+_IGNORE_PATTERN_PARTS = [
+    (
+        "(?-i:" + re.escape(term) + ")"
+        if term in _CASE_SENSITIVE_IGNORE_TERMS
+        else re.escape(term)
+    )
+    for term in IGNORE_TERMS
+]
 IGNORE_PATTERN = re.compile(
-    r"(?<![a-zA-Z])(" + "|".join(re.escape(t) for t in IGNORE_TERMS) + r")(?![a-zA-Z])",
+    r"(?<![a-zA-Z])(" + "|".join(_IGNORE_PATTERN_PARTS) + r")(?![a-zA-Z])",
     flags=re.IGNORECASE,
 )
 
@@ -155,6 +164,47 @@ def load_dictionary() -> dict[str, str]:
 TERMINOLOGY_FIXES = load_dictionary()
 
 
+def _restore_format_code_boundaries(text: str, source: str) -> str:
+    """Restore source whitespace immediately around Minecraft format codes."""
+    source_codes = list(
+        re.finditer(r"[&§][0-9a-fk-orlmn]", source, flags=re.IGNORECASE)
+    )
+    candidate_codes = list(
+        re.finditer(r"[&§][0-9a-fk-orlmn]", text, flags=re.IGNORECASE)
+    )
+    if len(source_codes) != len(candidate_codes):
+        return text
+    source_tokens = [match.group(0).casefold() for match in source_codes]
+    candidate_tokens = [match.group(0).casefold() for match in candidate_codes]
+    if source_tokens != candidate_tokens:
+        return text
+
+    for source_match, candidate_match in reversed(
+        list(zip(source_codes, candidate_codes, strict=True))
+    ):
+        candidate_start = candidate_match.start()
+        candidate_end = candidate_match.end()
+        source_before = source[source_match.start() - 1] if source_match.start() else ""
+        source_after = source[source_match.end()] if source_match.end() < len(source) else ""
+        if source_before.isspace():
+            # A leading article may be removed by the translator.  Do not
+            # create a visible leading blank before a code moved to offset 0.
+            if candidate_start != 0 and not text[candidate_start - 1].isspace():
+                text = text[:candidate_start] + " " + text[candidate_start:]
+        else:
+            while candidate_start > 0 and text[candidate_start - 1].isspace():
+                text = text[: candidate_start - 1] + text[candidate_start:]
+                candidate_start -= 1
+                candidate_end -= 1
+        if source_after.isspace():
+            if candidate_end >= len(text) or not text[candidate_end].isspace():
+                text = text[:candidate_end] + " " + text[candidate_end:]
+        else:
+            while candidate_end < len(text) and text[candidate_end].isspace():
+                text = text[:candidate_end] + text[candidate_end + 1 :]
+    return text
+
+
 def polish_translation(
     text: str,
     *,
@@ -187,9 +237,11 @@ def polish_translation(
     # Убираем дублирующийся пробел перед reset-кодом
     text = re.sub(r"\s+([&§]r)(?=\s)", r"\1", text, flags=re.IGNORECASE)
 
-    # Добавляем пробел, если reset-код склеился со следующим словом ("уровня&rи" -> "уровня&r и")
+    # Добавляем пробел только после reset-кода, если он действительно
+    # склеился со следующим словом ("уровня&rи" -> "уровня&r и").
+    # Для цветовых/стилевых кодов пробел никогда не добавляем: в Minecraft
+    # корректная форма `&6Extras` должна остаться `&6Дополнительно`.
     text = re.sub(r"(?<=[^\s&§])([&§]r)(?=[^\W_])", r"\1 ", text, flags=re.IGNORECASE)
-    text = re.sub(r"([&§][0-9a-fk-or])(?=[A-Za-zА-Яа-яЁё])", r"\1 ", text, flags=re.IGNORECASE)
     text = re.sub(r"\[\s+(%\d*\$?[sd])\s+\]", r"[\1]", text)
     text = re.sub(r"\(\s+(%\d*\$?[sd])\s+\)", r"(\1)", text)
     text = re.sub(r'\"\s+(%\d*\$?[sd])\s+\"', r'"\1"', text)
@@ -201,7 +253,8 @@ def polish_translation(
     text = re.sub(r"\[\s+", "[", text)
     text = re.sub(r"\s+\]", "]", text)
     text = re.sub(r" {2,}", " ", text)
-    text = re.sub(r"([&§][0-9a-fk-or])(?=[A-Za-zА-Яа-яЁё])", r"\1 ", text, flags=re.IGNORECASE)
+    if boundary_source is not None:
+        text = _restore_format_code_boundaries(text, boundary_source)
 
     for wrong, right in TERMINOLOGY_FIXES.items():
 
@@ -495,6 +548,14 @@ def is_nontranslatable_value(text: str) -> bool:
     if not text or not text.strip():
         return True
     stripped = text.strip()
+    # FTB Quests/Book macros are renderer instructions, not prose.  Sending
+    # them to an engine can produce extra brackets or translated attributes.
+    if re.fullmatch(
+        r"\{(?:@(?:pagebreak|[a-z0-9_.:-]+)|image:[^{}]+)\}",
+        stripped,
+        flags=re.IGNORECASE,
+    ):
+        return True
     if _NUMERIC_VALUE_PATTERN.fullmatch(stripped):
         return True
     if _NUMERIC_UNIT_VALUE_PATTERN.fullmatch(stripped):

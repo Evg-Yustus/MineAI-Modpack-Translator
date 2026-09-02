@@ -13,6 +13,7 @@ from mineai.processors.selection import (
     collect_snbt_selection,
 )
 from mineai.processors.snbt_extract import build_snbt_baseline_document
+from mineai.language_validation import translation_needs_repair
 
 
 def collect_bq_selection_with_baseline(
@@ -52,6 +53,8 @@ def collect_snbt_selection_with_baseline(
     *,
     same_latin_script: bool,
     allowed_entry_ids: set[str] | frozenset[str] | None = None,
+    allowed_unit_ids: set[str] | frozenset[str] | None = None,
+    target_lang: dict | None = None,
 ) -> SnbtSelection:
     if mode == "force" or not same_latin_script:
         return collect_snbt_selection(
@@ -60,20 +63,49 @@ def collect_snbt_selection_with_baseline(
             mode,
             target_regex,
             allowed_entry_ids=allowed_entry_ids,
+            allowed_unit_ids=allowed_unit_ids,
+            target_lang=target_lang,
         )
 
     document = build_snbt_baseline_document(
         original_content,
         current_content,
         allowed_entry_ids=allowed_entry_ids,
+        allowed_unit_ids=allowed_unit_ids,
+    )
+    needs_repair = (
+        (lambda source, existing: translation_needs_repair(
+            source,
+            existing,
+            target_lang,
+        ))
+        if target_lang is not None
+        else None
     )
     pending = document.pending_source_values(
         mode,
         target_regex,
         same_latin_script=True,
+        needs_repair=needs_repair,
+    )
+    repair_pending = (
+        tuple(
+            dict.fromkeys(
+                node.source
+                for node in document.nodes
+                if node.translatable
+                and node.existing.strip()
+                and node.existing.strip() != node.source.strip()
+                and needs_repair is not None
+                and needs_repair(node.source, node.existing)
+            )
+        )
+        if needs_repair is not None
+        else ()
     )
     return SnbtSelection(
         total_translatable=len(document.unique_translatable_sources()),
         pending=list(pending),
         document=document,
+        repair_pending=repair_pending,
     )

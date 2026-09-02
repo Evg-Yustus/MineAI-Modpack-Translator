@@ -35,6 +35,8 @@ ENGINE_OPTIONS = {
     "Local AI": ("ai", "local"),
     "OpenRouter": ("ai", "openrouter"),
     "LM Studio": ("ai", "lmstudio"),
+    "Ollama": ("ai", "ollama"),
+    "Llama": ("ai", "llama"),
 }
 
 
@@ -142,6 +144,20 @@ def engine_readiness(config, engine_label: str) -> tuple[bool, str]:
         if not model:
             return False, tr("ready.lmstudio_model")
         return True, f"LM Studio · {model}"
+    if engine == "ai" and provider == "ollama":
+        if not config.get("OLLAMA", "base_url").strip():
+            return False, tr("ready.ollama_url")
+        model = config.get("OLLAMA", "model").strip()
+        if not model:
+            return False, tr("ready.ollama_model")
+        return True, f"Ollama · {model}"
+    if engine == "ai" and provider == "llama":
+        if not config.get("LLAMA", "base_url").strip():
+            return False, tr("ready.llama_url")
+        model = config.get("LLAMA", "model").strip()
+        if not model:
+            return False, tr("ready.llama_model")
+        return True, f"Llama · {model}"
     if engine == "ai":
         model_path = config.get("AI", "model_path").strip()
         if not model_path:

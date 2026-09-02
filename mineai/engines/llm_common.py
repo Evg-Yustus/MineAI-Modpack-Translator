@@ -10,6 +10,7 @@ from mineai.engines.base import EngineCallbacks, EngineItem, TranslationEngine
 from mineai.engines.clean_transport import (
     VisibleTextNode,
     extract_visible_nodes,
+    numeric_placeholder_tokens,
     rebuild_masked,
     response_is_clean,
     sanitize_prompt_context,
@@ -264,9 +265,10 @@ def build_clean_translation_prompt(
 ) -> str:
     """Build a prompt whose data section contains visible text only.
 
-    Unlike the legacy object transport, this protocol has no adapter keys and
-    no marker values.  The array order is the only association the caller
-    needs; the original template is restored locally after the response.
+    Unlike the legacy object transport, this protocol has no adapter keys.  The
+    array order is the only association the caller needs; the original template
+    is restored locally after the response.  Numeric/roman-level placeholders
+    are included only when they are needed to keep one sentence together.
     """
 
     blob = json.dumps(payload, ensure_ascii=False)
@@ -307,12 +309,21 @@ def build_clean_translation_prompt(
             f"{lines}\n"
         )
 
+    has_numeric_placeholders = any(PLACEHOLDER_PATTERN.search(value) for value in payload)
+    placeholder_rule = (
+        "Some elements contain immutable [#N#] tokens for numeric values or "
+        "Roman level markers. Preserve each such token exactly and in the same "
+        "order; do not translate, remove, duplicate or move it.\n"
+        if has_numeric_placeholders
+        else ""
+    )
     rules = (
         "STRICT TRANSPORT RULES:\n"
         "1. DATA is an ordered JSON array of visible prose fragments.\n"
         "2. Return exactly one JSON array of strings, with the same length and order.\n"
         "3. Translate only the text in each element. Do not add markup, links, tags, "
-        "formatting codes, numbers, placeholders or explanations.\n"
+        "formatting codes, numbers or explanations.\n"
+        f"{placeholder_rule}"
         "4. The application restores all protected syntax, spacing and document structure.\n"
         "5. Never merge, split, reorder, omit or duplicate array elements.\n"
         "6. Output only valid JSON; no Markdown fences or commentary."
@@ -415,6 +426,9 @@ def parse_llm_array_response(content: str) -> list[str]:
                 break
     if end_idx is None:
         raise TypeError("unterminated JSON array")
+    trailing = text[end_idx:].strip()
+    if trailing and trailing != "```":
+        raise ValueError("extra data after JSON array")
     text = text[start_idx:end_idx]
 
     # A few local models emit literal line breaks inside JSON strings.  Keep the
@@ -764,7 +778,11 @@ class BatchLlmEngine(TranslationEngine):
         force_translation: bool = False,
     ) -> list[str]:
         node_map: dict[str, tuple[VisibleTextNode, ...]] = {
-            key: extract_visible_nodes(items[key].masked) for key in chunk_keys
+            key: extract_visible_nodes(
+                items[key].masked,
+                coalesce_numeric=numeric_placeholder_tokens(items[key].mapping),
+            )
+            for key in chunk_keys
         }
         flat_nodes: list[tuple[str, VisibleTextNode]] = [
             (key, node)
@@ -799,7 +817,7 @@ class BatchLlmEngine(TranslationEngine):
                 return list(chunk_keys)
             try:
                 translated_nodes = parse_llm_array_response(content)
-            except (TypeError, json.JSONDecodeError):
+            except (TypeError, ValueError, json.JSONDecodeError):
                 # Older user prompts/custom local servers may still return the
                 # pre-Beta42 object protocol.  Accept it as a compatibility
                 # path, while all newly generated requests remain arrays of
@@ -834,11 +852,33 @@ class BatchLlmEngine(TranslationEngine):
         for (key, node), translated in zip(flat_nodes, translated_nodes):
             value = translated.strip()
             can_drop_article = (
-                not value
-                and node.text.casefold() in {"a", "an", "the"}
+                force_translation
+                and
+                node.text.casefold() in {"a", "an", "the"}
                 and target_lang.get("api") != "en"
+                and (
+                    not value
+                    or value.casefold() == node.text.casefold()
+                )
             )
-            if not can_drop_article and not response_is_clean(value):
+            if can_drop_article:
+                # Treat both an empty response and an unchanged standalone
+                # article as the same safe operation: omit the article while
+                # keeping the following protected fragment in its source slot.
+                value = ""
+            expected_placeholders = frozenset(
+                match.group(0) for match in PLACEHOLDER_PATTERN.finditer(node.text)
+            )
+            if (
+                not can_drop_article
+                and (
+                    not placeholders_match(value, node.text)
+                    or not response_is_clean(
+                        value,
+                        allowed_placeholders=expected_placeholders,
+                    )
+                )
+            ):
                 failed.add(key)
                 continue
             translated_by_key[key].append(value)
