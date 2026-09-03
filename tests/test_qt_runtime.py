@@ -21,6 +21,7 @@ class QtRuntimeTests(unittest.TestCase):
                     with mock.patch(
                         "mineai.runtime.qt_runtime.os.add_dll_directory",
                         return_value=object(),
+                        create=True,
                     ) as add_dll_directory:
                         with mock.patch(
                             "mineai.runtime.qt_runtime.ctypes.WinDLL"
