@@ -1,5 +1,6 @@
 ﻿"""Release metadata must follow the runtime version automatically."""
 
+import ast
 import re
 import unittest
 from pathlib import Path
@@ -52,6 +53,13 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_cache_marker_contains_release_and_validator_fingerprint(self):
         self.assertIn(__version__, _CACHE_VALIDATION_VERSION)
         self.assertRegex(_CACHE_VALIDATION_VERSION, r"\|[0-9a-f]{12}$")
+
+    def test_preview_avoids_python312_only_fstring_backslashes(self):
+        """The CI compile step must remain valid on the supported Python 3.10 runtime."""
+        source = (ROOT / "mineai/preview.py").read_text(encoding="utf-8-sig")
+        ast.parse(source, filename="mineai/preview.py", feature_version=(3, 10))
+        self.assertNotIn("normalized = f\"/{path.casefold().replace", source)
+        self.assertNotIn("f\"/{item.logical_path.casefold().replace", source)
 
 
 if __name__ == "__main__":

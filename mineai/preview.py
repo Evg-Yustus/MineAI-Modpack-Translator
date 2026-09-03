@@ -623,7 +623,7 @@ def _snbt_masked_skeleton(
 
 
 def _is_ftb_language_catalog(path: str) -> bool:
-    normalized = f"/{path.casefold().replace('\\', '/')}"
+    normalized = "/" + path.casefold().replace("\\", "/")
     return "/ftbquests/quests/lang/" in normalized
 
 
@@ -1139,7 +1139,7 @@ class PreviewBuilder:
     ) -> PreviewDocument:
         issues: list[PreviewIssue] = []
         is_language_catalog = "/ftbquests/quests/lang/" in (
-            f"/{item.logical_path.casefold().replace('\\', '/')}"
+            "/" + item.logical_path.casefold().replace("\\", "/")
         )
         try:
             source_doc = build_snbt_document(item.source_text)
